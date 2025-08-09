@@ -1,0 +1,315 @@
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  font-family: 'Segoe UI', sans-serif;
+  background-color: #0a0a0a;
+  color: white;
+}
+
+.painel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 100%;
+  padding-bottom: 140px; /* espaço para o rodapé fixo */
+}
+
+.topo {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background-color: #111;
+  padding: 30px;
+  border-bottom: 2px solid cyan;
+}
+
+.titulo {
+  font-size: 2.5rem;
+  font-weight: bold;
+  color: cyan;
+  text-shadow: 0 0 10px cyan;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.previsao {
+  font-size: 1.2rem;
+  color: cyan;
+  text-shadow: 0 0 5px cyan;
+}
+
+.conteudo {
+  display: flex;
+  flex-direction: row;
+  padding: 30px;
+  gap: 30px;
+  flex-grow: 1;
+}
+
+.principal {
+  flex: 1;
+  background-color: #111;
+  border: 2px solid cyan;
+  border-radius: 12px;
+  padding: 30px;
+  text-align: center;
+  box-shadow: 0 0 20px cyan;
+  animation: fadeInUp 0.6s ease-in-out;
+}
+
+.principal h2 {
+  font-size: 7rem;
+  margin: 0px 0 10px;
+  color: #00ffff;
+  text-shadow: 0 0 8px cyan;
+}
+
+.principal p {
+  font-size: 2.5rem;
+  margin: 10px 40px;
+  color: #eee;
+  text-shadow: 0 0 4px #999;
+  margin-top: -15px;
+}
+
+.imagem-principal {
+  width: 100%;
+  max-width: 500px;
+  height: 400px; /* altura fixa para manter alinhamento */
+  object-fit: contain; /* mantém proporção e centraliza */
+  margin-bottom: -80px;
+  margin-top: -15px;
+  filter: drop-shadow(0 0 5px white);
+}
+
+
+.lista-lateral {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.card-lateral {
+  background-color: #111;
+  border: 2px solid cyan;
+  border-radius: 10px;
+  padding: 15px;
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  box-shadow: 0 0 10px cyan;
+}
+
+.card-lateral h3 {
+  margin: 0;
+  font-size: 1.4rem;
+  color: white;
+}
+
+.card-lateral p {
+  margin: 2px 0;
+  font-size: 1rem;
+  color: #ccc;
+}
+
+.miniatura {
+  width: 80px;
+  height: auto;
+  filter: drop-shadow(0 0 4px white);
+  flex-shrink: 0;
+}
+
+/* Responsivo */
+@media (max-width: 900px) {
+  .conteudo {
+    flex-direction: column;
+  }
+
+  .lista-lateral {
+    flex-direction: row;
+    overflow-x: auto;
+  }
+
+  .card-lateral {
+    min-width: 250px;
+  }
+
+  .principal h2 {
+    font-size: 4rem;
+  }
+
+  .principal p {
+    font-size: 1.5rem;
+  }
+}
+
+/* Animação para troca suave do carro principal */
+@keyframes fadeInUp {
+  0% {
+    opacity: 0;
+    transform: translateY(30px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* NOVA SEÇÃO: PARCEIROS */
+.parceiros {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  border-top: 2px solid cyan;
+  padding: 20px 0;
+  background-color: #0d0d0d;
+  box-shadow: inset 0 0 10px cyan;
+  overflow: hidden;
+  z-index: 100;
+}
+
+.parceiros h3 {
+  font-size: 2rem;
+  color: cyan;
+  text-shadow: 0 0 6px cyan;
+  margin-bottom: 20px;
+}
+
+.lista-parceiros {
+  width: 100%;
+  overflow: hidden;
+}
+
+.logos-scroll {
+  display: flex;
+  gap: 60px;
+  animation: marquee 10s linear infinite;
+  width: max-content;
+}
+
+.logo-parceiro {
+  width: 120px;
+  height: auto;
+  filter: drop-shadow(0 0 4px cyan);
+  flex-shrink: 0;
+}
+
+.logo-parceiro:hover {
+  transform: scale(1.1);
+}
+
+/* Animação contínua */
+@keyframes marquee {
+  0% {
+    transform: translateX(0%);
+  }
+  100% {
+    transform: translateX(-50%);
+  }
+}
+
+.alerta-finalizado {
+  position: fixed;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  background-color: #00ffcc;
+  color: #000;
+  padding: 15px 30px;
+  font-size: 1.5rem;
+  font-weight: bold;
+  border-radius: 0 0 10px 10px;
+  box-shadow: 0 0 10px cyan;
+  z-index: 999;
+  animation: slideDown 0.5s ease;
+}
+
+@keyframes slideDown {
+  from {
+    top: -100px;
+    opacity: 0;
+  }
+  to {
+    top: 0;
+    opacity: 1;
+  }
+}
+
+.destaque-finalizado {
+  animation: brilhoNeon 1s infinite, zoomPulse 0.8s infinite alternate;
+  border: 4px solid #00ffff;
+  box-shadow:
+    0 0 10px #0ff,
+    0 0 20px #0ff,
+    0 0 30px #0ff,
+    0 0 40px #0ff;
+  transition: transform 0.3s ease;
+  z-index: 5;
+}
+
+@keyframes zoomPulse {
+  0% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1.1);
+    opacity: 0.85;
+  }
+}
+
+@keyframes brilhoNeon {
+  0% {
+    box-shadow:
+      0 0 10px #0ff,
+      0 0 20px #0ff,
+      0 0 30px #0ff,
+      0 0 40px #0ff;
+  }
+  50% {
+    box-shadow:
+      0 0 20px #0ff,
+      0 0 30px #00e0ff,
+      0 0 40px #00e0ff,
+      0 0 50px #00e0ff;
+  }
+  100% {
+    box-shadow:
+      0 0 10px #0ff,
+      0 0 20px #0ff,
+      0 0 30px #0ff,
+      0 0 40px #0ff;
+  }
+}
+
+
+.texto-finalizado {
+  margin-top: 60px;
+  font-size: 3rem;
+  margin-bottom: -35px;
+  font-weight: bold;
+  color: #00ff00;
+  text-shadow: 0 0 10px #00ff00, 0 0 20px #00ff00;
+  animation: pulseVerde 1s infinite alternate;
+}
+
+/* Animação pulsante verde */
+@keyframes pulseVerde {
+  0% {
+    transform: scale(1);
+    opacity: 1;
+    text-shadow: 0 0 10px #00ff00;
+  }
+  100% {
+    transform: scale(1.05);
+    opacity: 0.85;
+    text-shadow: 0 0 20px #00ff00;
+  }
+}
