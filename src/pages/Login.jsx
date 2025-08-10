@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
+import api from '../services/api'; // usa o axios com baseURL do .env
 
 const Login = () => {
   const [usuario, setUsuario] = useState('');
@@ -10,14 +10,11 @@ const Login = () => {
 
   const handleLogin = async (e) => {
     e.preventDefault();
+    setErro('');
 
     try {
-      const response = await axios.post('http://localhost:3001/api/login', {
-        usuario,
-        senha,
-      });
-
-      const { token, tipo } = response.data;
+      const { data } = await api.post('/api/login', { usuario, senha });
+      const { token, tipo } = data;
 
       localStorage.setItem('token', token);
       localStorage.setItem('usuario', usuario);
