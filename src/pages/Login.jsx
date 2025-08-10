@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import api from '../services/api'; // usa o axios com baseURL do .env
+import api from '../services/api';
+
 
 const Login = () => {
   const [usuario, setUsuario] = useState('');
