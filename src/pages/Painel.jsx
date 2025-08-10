@@ -3,7 +3,7 @@ import axios from 'axios';
 import { useEffect, useState, useRef } from 'react';
 import { io } from 'socket.io-client';
 
-const socket = io('http://localhost:3001');
+const socket = io('https://recepcaopneuforte.onrender.com');
 
 export default function Painel() {
   const [fila, setFila] = useState([]);
@@ -15,7 +15,7 @@ export default function Painel() {
   useEffect(() => {
     const buscarFila = async () => {
       try {
-        const response = await axios.get('http://localhost:3001/api/fila-servico');
+        const response = await axios.get('https://recepcaopneuforte.onrender.com/api/fila-servico');
         if (Array.isArray(response.data)) {
           setFila(response.data.slice(0, 7));
         } else {
@@ -48,7 +48,7 @@ export default function Painel() {
   useEffect(() => {
     const fetchFila = async () => {
       try {
-        const response = await axios.get('http://localhost:3001/api/fila-servico');
+        const response = await axios.get('https://recepcaopneuforte.onrender.com/api/fila-servico');
         if (Array.isArray(response.data)) {
           setFila(response.data.slice(0, 7));
         }
