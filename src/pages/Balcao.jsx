@@ -55,7 +55,7 @@ const Balcao = () => {
 
   const buscarCarros = async () => {
     try {
-      const res = await axios.get('http://localhost:3001/api/fila-servico');
+      const res = await axios.get('https://recepcaopneuforte.onrender.com/api/fila-servico');
       setCarros(res.data);
     } catch (error) {
       console.error('Erro ao buscar carros:', error);
@@ -71,7 +71,7 @@ const Balcao = () => {
     }
 
     try {
-      await axios.post('http://localhost:3001/api/cadastrar-carro', {
+      await axios.post('https://recepcaopneuforte.onrender.com/api/cadastrar-carro', {
         placa,
         modelo,
         cor,
@@ -101,7 +101,7 @@ const Balcao = () => {
 
   const finalizarAtendimento = async (id) => {
     try {
-      await axios.put(`http://localhost:3001/api/finalizar-carro/${id}`);
+      await axios.put(`https://recepcaopneuforte.onrender.com/api/finalizar-carro/${id}`);
       setConfirmandoId(null);
       buscarCarros();
     } catch (error) {
