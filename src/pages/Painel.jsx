@@ -161,7 +161,7 @@ export default function Painel() {
         {/* ESQUERDA: logo no lugar de "RECEPÇÃO" */}
         <div className="titulo" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <img
-            src="/public/logo_pneuforte.png" // <-- ajuste o caminho do arquivo da logo, se necessário
+            src="/img/logo_pneuforte.png" // <-- ajuste o caminho do arquivo da logo, se necessário
             alt="Pneu Forte"
             style={{ height: 65, objectFit: 'contain' }}
           />
