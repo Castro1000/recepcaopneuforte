@@ -4,6 +4,7 @@ import { useEffect, useState, useRef } from 'react';
 import { io } from 'socket.io-client';
 
 const socket = io('https://recepcaopneuforte.onrender.com');
+//const socket = io('http://localhost:3001');
 
 export default function Painel() {
   const [fila, setFila] = useState([]);
@@ -16,6 +17,7 @@ export default function Painel() {
     const buscarFila = async () => {
       try {
         const response = await axios.get('https://recepcaopneuforte.onrender.com/api/fila-servico');
+        //const response = await axios.get('http://localhost:3001/api/fila-servico');
         if (Array.isArray(response.data)) {
           setFila(response.data.slice(0, 7));
         } else {
@@ -30,9 +32,7 @@ export default function Painel() {
   }, []);
 
   useEffect(() => {
-    if (intervaloRef.current) {
-      clearInterval(intervaloRef.current);
-    }
+    if (intervaloRef.current) clearInterval(intervaloRef.current);
 
     if (fila.length > 1 && !carroFinalizado) {
       intervaloRef.current = setInterval(() => {
@@ -49,9 +49,8 @@ export default function Painel() {
     const fetchFila = async () => {
       try {
         const response = await axios.get('https://recepcaopneuforte.onrender.com/api/fila-servico');
-        if (Array.isArray(response.data)) {
-          setFila(response.data.slice(0, 7));
-        }
+        //const response = await axios.get('http://localhost:3001/api/fila-servico');
+        if (Array.isArray(response.data)) setFila(response.data.slice(0, 7));
       } catch (error) {
         console.error('Erro ao atualizar fila via socket:', error);
       }
@@ -71,17 +70,13 @@ export default function Painel() {
         busina1.play();
 
         motor.onloadedmetadata = () => {
-          const meioMotor = motor.duration / 2 * 1000;
-          setTimeout(() => {
-            freiada.play();
-          }, meioMotor);
+          const meioMotor = (motor.duration / 2) * 1000;
+          setTimeout(() => freiada.play(), meioMotor);
         };
 
         motor.onended = () => {
           busina2.play();
-
           busina2.onended = () => {
-            // --- fala do anúncio ---
             const ajustarLetra = (letra) => {
               const mapa = { Q: 'quê', W: 'dáblio', Y: 'ípsilon' };
               return mapa[letra.toUpperCase()] || letra.toUpperCase();
@@ -94,21 +89,18 @@ export default function Painel() {
               .join(' ');
 
             const modeloCorrigido = corrigirPronunciaModelo(carro.modelo);
-
             const frase = `Carro ${modeloCorrigido}, placa ${placaSeparada}, cor ${carro.cor}, dirija-se ao caixa.`;
 
             const falar = (texto) => {
               const u = new SpeechSynthesisUtterance(texto);
               u.lang = 'pt-BR';
-              u.volume = 1.0; // <-- AQUI você ajusta o VOLUME (0.0 a 1.0). 1.0 = máximo
-              u.rate = 1.0;   // <-- AQUI ajusta a VELOCIDADE se quiser (1.0 normal; 0.8 mais devagar; 1.2 mais rápido)
+              u.volume = 1.0;
+              u.rate = 1.0;
               speechSynthesis.speak(u);
             };
 
             falar(frase);
-            setTimeout(() => {
-              falar(frase);
-            }, 2500);
+            setTimeout(() => falar(frase), 2500);
           };
         };
       } catch (e) {
@@ -137,37 +129,42 @@ export default function Painel() {
     };
   }, [carroAtual]);
 
-  // Corrige a pronúncia de nomes de carros que a voz do navegador costuma pronunciar errado
+  // Corrige pronúncia de alguns modelos
   const corrigirPronunciaModelo = (modelo) => {
     const m = (modelo || '').toString().trim();
     const upper = m.toUpperCase();
     switch (upper) {
-      case 'KWID':   return 'quíd';            // mais natural em pt-BR
-      case 'BYD':    return 'bê i dê';         // soletra a sigla corretamente
-      case 'HB20':   return 'agá bê vinte';
-      case 'ONIX':   return 'ônix';
-      case 'T-CROSS':return 'tê cross';
-      case 'HR-V':   return 'agá érre vê';
-      case 'CR-V':   return 'cê érre vê';
-      default:       return m;                 // mantém o original
+      case 'KWID': return 'Quíi di';
+      case 'BYD': return 'biu ai díi';
+      case 'HB20': return 'agá bê vinte';
+      case 'ONIX': return 'ônix';
+      case 'T-CROSS': return 'tê cross';
+      case 'HR-V': return 'agá érre vê';
+      case 'CR-V': return 'cê érre vê';
+      case 'FERRARI': return 'FÉRRARI';
+      default: return m;
     }
   };
 
   const carroDestaque = carroFinalizado || fila[carroAtual];
 
+  // helper para montar "SERV1 | SERV2 | SERV3"
+  const montaServicos = (c) =>
+    [c?.servico, c?.servico2, c?.servico3].filter(Boolean).join(' | ');
+
   return (
     <div className="painel">
       <div className="topo">
-        {/* ESQUERDA: logo no lugar de "RECEPÇÃO" */}
+        {/* ESQUERDA: logo */}
         <div className="titulo" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <img
-            src="/img/logo_pneuforte.png" // <-- ajuste o caminho do arquivo da logo, se necessário
+            src="/img/logo_pneuforte.png"
             alt="Pneu Forte"
             style={{ height: 65, objectFit: 'contain' }}
           />
         </div>
 
-        {/* DIREITA: LISTA DE ESPERA em destaque no lugar da previsão */}
+        {/* DIREITA: título */}
         <div
           className="previsao"
           style={{
@@ -198,7 +195,9 @@ export default function Painel() {
                 <h2>{carroDestaque.modelo?.toUpperCase()}</h2>
                 <p>🔖 Placa: {carroDestaque.placa}</p>
                 <p>🎨 Cor: {carroDestaque.cor}</p>
-                <p>🔧 Serviço: {carroDestaque.servico}</p>
+
+                {/* serviços unidos por | */}
+                <p>🔧 Serviços: {montaServicos(carroDestaque) || '-'}</p>
               </div>
             </div>
           )}
@@ -212,7 +211,8 @@ export default function Painel() {
                 <div>
                   <h3>{carro.modelo?.toUpperCase()}</h3>
                   <p>{carro.placa}</p>
-                  <p>{carro.servico}</p>
+                  {/* serviços unidos por | */}
+                  <p>{montaServicos(carro) || '-'}</p>
                 </div>
               </div>
             )

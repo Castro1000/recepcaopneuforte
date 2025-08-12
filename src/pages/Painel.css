@@ -76,11 +76,11 @@ html, body {
 }
 
 .principal h2 {
-  font-size: 60px;
-  margin: 5px 10px;
+  font-size: 50px;
   color: #00ffff;
   text-shadow: 0 0 8px cyan;
-  margin-top: -20px;
+  margin-top: 10px;
+  margin-bottom: -10px;
 }
 
 .principal p {
@@ -88,7 +88,7 @@ html, body {
   margin: 5px 10px;
   color: #eee;
   text-shadow: 0 0 4px #f5f5f5;
-  margin-top: -15px;
+  margin-top: -5px;
 }
 
 .imagem-principal {
@@ -99,6 +99,7 @@ html, body {
   object-fit: contain;
   margin: 0 auto;           /* remove margens negativas que empurravam */
   filter: drop-shadow(0 0 5px white);
+  margin-bottom: -20px;
 }
 
 .lista-lateral {
@@ -245,49 +246,9 @@ html, body {
   to { top: 0; opacity: 1; }
 }
 
-.destaque-finalizado {
-  animation: brilhoNeon 1s infinite, zoomPulse 0.8s infinite alternate;
-  border: 4px solid #00ffff;
-  box-shadow:
-    0 0 10px #0ff,
-    0 0 20px #0ff,
-    0 0 30px #0ff,
-    0 0 40px #0ff;
-  transition: transform 0.3s ease;
-  z-index: 5;
-}
-
-@keyframes zoomPulse {
-  0% { transform: scale(1); opacity: 1; }
-  100% { transform: scale(1.1); opacity: 0.85; }
-}
-
-@keyframes brilhoNeon {
-  0% {
-    box-shadow:
-      0 0 10px #0ff,
-      0 0 20px #0ff,
-      0 0 30px #0ff,
-      0 0 40px #0ff;
-  }
-  50% {
-    box-shadow:
-      0 0 20px #0ff,
-      0 0 30px #00e0ff,
-      0 0 40px #00e0ff,
-      0 0 50px #00e0ff;
-  }
-  100% {
-    box-shadow:
-      0 0 10px #0ff,
-      0 0 20px #0ff,
-      0 0 30px #0ff,
-      0 0 40px #0ff;
-  }
-}
 
 .texto-finalizado {
-  margin-top: 0px;
+  margin-top: 10px;
   font-size: 2rem;
   margin-bottom: -25px;
   font-weight: bold;
@@ -302,30 +263,37 @@ html, body {
 }
 
 /* === FULLSCREEN DO CARD FINALIZADO (sobrepõe tudo) === */
+/* FULLSCREEN do card finalizado */
+/* FULLSCREEN do card finalizado */
 .destaque-finalizado{
-  position: fixed !important;     /* tira do fluxo e gruda na tela */
+  position: fixed !important;
   inset: 0 !important;            /* top/right/bottom/left = 0 */
   width: 100vw !important;
   height: 100vh !important;
   margin: 0 !important;
   border-radius: 0 !important;
   padding: clamp(24px, 4vh, 56px) !important;
-
-  /* fundo escuro para destacar */
-  background: rgba(10,10,10,0.92) !important;
+  background: rgb(10, 10, 10) !important; /* pode trocar por #000 */
   backdrop-filter: blur(2px);
-
-  /* centraliza o conteúdo do card */
   display: flex !important;
   align-items: center;
   justify-content: center;
   gap: clamp(16px, 3vw, 48px);
-
-  z-index: 10000 !important;      /* acima de topo/rodapé/alertas */
+  z-index: 10000 !important;
   animation: brilhoNeon 1s infinite, zoomPulse 0.8s infinite alternate, fadeFullscreenIn .25s ease-out;
-  transform: none !important;     /* evita deslocar para fora */
+  transform: none !important;
   box-sizing: border-box;
+
 }
+
+.destaque-finalizado h3{ font-size: clamp(3rem, 6vw, 6.5rem) !important; }
+.destaque-finalizado p{  font-size: clamp(1.8rem, 3vw, 3rem) !important; margin:.4em 0 !important; }
+.destaque-finalizado .miniatura{ width: clamp(140px, 18vw, 260px) !important; height:auto !important; }
+@keyframes fadeFullscreenIn{ from{opacity:0} to{opacity:1} }
+body:has(.destaque-finalizado){ overflow: hidden; } /* opcional */
+
+
+
 
 /* Tipografia maior quando em tela cheia */
 .destaque-finalizado h3{

@@ -165,3 +165,109 @@ body, html, #root {
   background-color: #dc3545;
   color: white;
 }
+
+
+
+
+
+
+
+
+
+
+/* Linha do serviço + botão */
+.servico-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Botão + (adicionar serviço) */
+.btn-add-servico {
+  width: 44px;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #10b981, #0ea472);
+  color: #fff;
+  font-size: 26px;
+  font-weight: 800;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 6px 16px rgba(16,185,129,.35);
+  transition: transform .08s ease, box-shadow .2s ease, filter .15s ease;
+}
+
+.btn-add-servico:hover { 
+  transform: translateY(-1px) scale(1.03);
+  box-shadow: 0 12px 24px rgba(16,185,129,.45);
+  filter: brightness(1.05);
+}
+
+.btn-add-servico:active {
+  transform: translateY(0) scale(.98);
+}
+
+.btn-add-servico:focus-visible {
+  outline: 2px solid #34d399;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px rgba(16,185,129,.25);
+}
+
+.btn-add-servico[disabled] {
+  opacity: .55;
+  cursor: not-allowed;
+  filter: grayscale(.2);
+  box-shadow: none;
+}
+
+/* Botão × (remover serviço extra) */
+.btn-remove-servico {
+  width: 44px;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #b91c1c, #9f1616);
+  color: #fff;
+  font-size: 24px;
+  font-weight: 800;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 6px 16px rgba(185,28,28,.35);
+  transition: transform .08s ease, box-shadow .2s ease, filter .15s ease;
+}
+
+.btn-remove-servico:hover {
+  transform: translateY(-1px) scale(1.03);
+  box-shadow: 0 12px 24px rgba(185,28,28,.45);
+  filter: brightness(1.05);
+}
+
+.btn-remove-servico:active {
+  transform: translateY(0) scale(.98);
+}
+
+.btn-remove-servico:focus-visible {
+  outline: 2px solid #f87171;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px rgba(239,68,68,.25);
+}
+
+/* o select dentro da linha do serviço ocupa o espaço restante */
+.servico-row select { flex: 1; }
+
+
+/* variação visual do modal de alerta */
+.confirmacao-central.modal-sucesso {
+  border-top: 6px solid #28a745;
+}
+.confirmacao-central.modal-erro {
+  border-top: 6px solid #dc3545;
+}
+
