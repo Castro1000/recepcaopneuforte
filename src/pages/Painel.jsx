@@ -3,8 +3,8 @@ import axios from 'axios';
 import { useEffect, useState, useRef } from 'react';
 import { io } from 'socket.io-client';
 
-const socket = io('https://recepcaopneuforte.onrender.com');
-//const socket = io('http://localhost:3001');
+//const socket = io('https://recepcaopneuforte.onrender.com');
+const socket = io('http://localhost:3001');
 
 export default function Painel() {
   const [fila, setFila] = useState([]);
@@ -16,8 +16,8 @@ export default function Painel() {
   useEffect(() => {
     const buscarFila = async () => {
       try {
-        const response = await axios.get('https://recepcaopneuforte.onrender.com/api/fila-servico');
-        //const response = await axios.get('http://localhost:3001/api/fila-servico');
+        //const response = await axios.get('https://recepcaopneuforte.onrender.com/api/fila-servico');
+        const response = await axios.get('http://localhost:3001/api/fila-servico');
         if (Array.isArray(response.data)) {
           setFila(response.data.slice(0, 7));
         } else {
@@ -48,8 +48,8 @@ export default function Painel() {
   useEffect(() => {
     const fetchFila = async () => {
       try {
-        const response = await axios.get('https://recepcaopneuforte.onrender.com/api/fila-servico');
-        //const response = await axios.get('http://localhost:3001/api/fila-servico');
+        //const response = await axios.get('https://recepcaopneuforte.onrender.com/api/fila-servico');
+        const response = await axios.get('http://localhost:3001/api/fila-servico');
         if (Array.isArray(response.data)) setFila(response.data.slice(0, 7));
       } catch (error) {
         console.error('Erro ao atualizar fila via socket:', error);
@@ -78,7 +78,7 @@ export default function Painel() {
           busina2.play();
           busina2.onended = () => {
             const ajustarLetra = (letra) => {
-              const mapa = { Q: 'quê', W: 'dáblio', Y: 'ípsilon' };
+              const mapa = { Q: 'quê', W: 'dáblio', Y: 'ípsilon', E: 'é' };
               return mapa[letra.toUpperCase()] || letra.toUpperCase();
             };
             const placaSeparada = carro.placa
@@ -134,7 +134,7 @@ export default function Painel() {
     const m = (modelo || '').toString().trim();
     const upper = m.toUpperCase();
     switch (upper) {
-      case 'KWID': return 'Quíi di';
+      case 'KWID': return 'cuidi';
       case 'BYD': return 'biu ai díi';
       case 'HB20': return 'agá bê vinte';
       case 'ONIX': return 'ônix';
