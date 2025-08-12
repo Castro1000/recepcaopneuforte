@@ -2,8 +2,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import axios from 'axios';
 import './Balcao.css';
 
-const API_BASE = 'http://localhost:3001';
-// const API_BASE = 'https://recepcaopneuforte.onrender.com';
+//const API_BASE = 'http://localhost:3001';
+const API_BASE = 'https://recepcaopneuforte.onrender.com';
 
 const MEDIA_FALLBACK_MIN = 2; // média padrão (minutos) quando não temos histórico
 
