@@ -7,6 +7,14 @@ html, body {
   font-family: 'Segoe UI', sans-serif;
   background-color: #0a0a0a;
   color: white;
+  height: 100vh;            /* garante 1 viewport */
+  overflow: hidden;          /* evita rolagem/corte na TV */
+}
+
+/* Alturas fixas proporcionais para TV 32" */
+:root{
+  --topoH: clamp(70px, 12vh, 140px);
+  --footerH: clamp(70px, 12vh, 140px);
 }
 
 .painel {
@@ -15,7 +23,7 @@ html, body {
   flex-direction: column;
   justify-content: space-between;
   min-height: 100%;
-  padding-bottom: 140px; /* espaço para o rodapé fixo */
+  padding-bottom: var(--footerH); /* espaço exato do rodapé fixo */
 }
 
 .topo {
@@ -23,12 +31,13 @@ html, body {
   justify-content: space-between;
   align-items: center;
   background-color: #111;
-  padding: 30px;
+  padding: 0 30px;
   border-bottom: 2px solid cyan;
+  height: var(--topoH);     /* altura controlada */
 }
 
 .titulo {
-  font-size: 2.5rem;
+  font-size: 3rem;          /* maior para leitura à distância */
   font-weight: bold;
   color: cyan;
   text-shadow: 0 0 10px cyan;
@@ -38,7 +47,7 @@ html, body {
 }
 
 .previsao {
-  font-size: 1.2rem;
+  font-size: 1.6rem;
   color: cyan;
   text-shadow: 0 0 5px cyan;
 }
@@ -46,9 +55,12 @@ html, body {
 .conteudo {
   display: flex;
   flex-direction: row;
-  padding: 30px;
-  gap: 30px;
+  padding: 10px;
+  gap: 10px;
   flex-grow: 1;
+  min-height: 0;            /* evita overflow em flex */
+  height: calc(100vh - var(--topoH) - var(--footerH)); /* área útil sem cortar */
+  overflow: hidden;
 }
 
 .principal {
@@ -60,39 +72,42 @@ html, body {
   text-align: center;
   box-shadow: 0 0 20px cyan;
   animation: fadeInUp 0.6s ease-in-out;
+  min-width: 0;
 }
 
 .principal h2 {
-  font-size: 7rem;
-  margin: 0px 0 10px;
+  font-size: 60px;
+  margin: 5px 10px;
   color: #00ffff;
   text-shadow: 0 0 8px cyan;
+  margin-top: -20px;
 }
 
 .principal p {
-  font-size: 2.5rem;
-  margin: 10px 40px;
+  font-size: 2.2rem;
+  margin: 5px 10px;
   color: #eee;
-  text-shadow: 0 0 4px #999;
+  text-shadow: 0 0 4px #f5f5f5;
   margin-top: -15px;
 }
 
 .imagem-principal {
-  width: 100%;
-  max-width: 500px;
-  height: 400px; /* altura fixa para manter alinhamento */
-  object-fit: contain; /* mantém proporção e centraliza */
-  margin-bottom: -80px;
-  margin-top: -15px;
+  width: 50%;
+  max-width: 300px;
+  height: auto;             /* evita altura fixa que estoura */
+  max-height: 38vh;         /* garante que não passe da área útil */
+  object-fit: contain;
+  margin: 0 auto;           /* remove margens negativas que empurravam */
   filter: drop-shadow(0 0 5px white);
 }
-
 
 .lista-lateral {
   flex: 1;
   display: flex;
   flex-direction: column;
   gap: 20px;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .card-lateral {
@@ -108,27 +123,29 @@ html, body {
 
 .card-lateral h3 {
   margin: 0;
-  font-size: 1.4rem;
+  font-size: 1.8rem;        /* melhora legibilidade na TV */
   color: white;
 }
 
 .card-lateral p {
-  margin: 2px 0;
-  font-size: 1rem;
+  margin: 1px 0;
+  font-size: 1.2rem;
   color: #ccc;
 }
 
 .miniatura {
-  width: 80px;
+  width: 70px;
   height: auto;
   filter: drop-shadow(0 0 4px white);
   flex-shrink: 0;
 }
 
-/* Responsivo */
+/* Responsivo (mantido) */
 @media (max-width: 900px) {
   .conteudo {
     flex-direction: column;
+    height: auto;
+    overflow: visible;
   }
 
   .lista-lateral {
@@ -149,37 +166,35 @@ html, body {
   }
 }
 
-/* Animação para troca suave do carro principal */
+/* Animação (mantida) */
 @keyframes fadeInUp {
-  0% {
-    opacity: 0;
-    transform: translateY(30px);
-  }
-  100% {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  0% { opacity: 0; transform: translateY(30px); }
+  100% { opacity: 1; transform: translateY(0); }
 }
 
-/* NOVA SEÇÃO: PARCEIROS */
+/* PARCEIROS fixo, com altura estável */
 .parceiros {
   position: fixed;
   bottom: 0;
   left: 0;
   width: 100%;
   border-top: 2px solid cyan;
-  padding: 20px 0;
+  padding: 12px 0;
   background-color: #0d0d0d;
   box-shadow: inset 0 0 10px cyan;
   overflow: hidden;
   z-index: 100;
+  height: var(--footerH);   /* altura controlada */
+  display: flex;
+  align-items: center;
 }
 
 .parceiros h3 {
   font-size: 2rem;
   color: cyan;
   text-shadow: 0 0 6px cyan;
-  margin-bottom: 20px;
+  margin: 0 20px 0 30px;
+  white-space: nowrap;
 }
 
 .lista-parceiros {
@@ -201,20 +216,14 @@ html, body {
   flex-shrink: 0;
 }
 
-.logo-parceiro:hover {
-  transform: scale(1.1);
-}
+.logo-parceiro:hover { transform: scale(1.1); }
 
-/* Animação contínua */
 @keyframes marquee {
-  0% {
-    transform: translateX(0%);
-  }
-  100% {
-    transform: translateX(-50%);
-  }
+  0% { transform: translateX(0%); }
+  100% { transform: translateX(-50%); }
 }
 
+/* Alertas e destaques (mantidos) */
 .alerta-finalizado {
   position: fixed;
   top: 0;
@@ -223,7 +232,7 @@ html, body {
   background-color: #00ffcc;
   color: #000;
   padding: 15px 30px;
-  font-size: 1.5rem;
+  font-size: 1.8rem;        /* melhor na TV */
   font-weight: bold;
   border-radius: 0 0 10px 10px;
   box-shadow: 0 0 10px cyan;
@@ -232,14 +241,8 @@ html, body {
 }
 
 @keyframes slideDown {
-  from {
-    top: -100px;
-    opacity: 0;
-  }
-  to {
-    top: 0;
-    opacity: 1;
-  }
+  from { top: -100px; opacity: 0; }
+  to { top: 0; opacity: 1; }
 }
 
 .destaque-finalizado {
@@ -255,14 +258,8 @@ html, body {
 }
 
 @keyframes zoomPulse {
-  0% {
-    transform: scale(1);
-    opacity: 1;
-  }
-  100% {
-    transform: scale(1.1);
-    opacity: 0.85;
-  }
+  0% { transform: scale(1); opacity: 1; }
+  100% { transform: scale(1.1); opacity: 0.85; }
 }
 
 @keyframes brilhoNeon {
@@ -289,27 +286,73 @@ html, body {
   }
 }
 
-
 .texto-finalizado {
-  margin-top: 60px;
-  font-size: 3rem;
-  margin-bottom: -35px;
+  margin-top: 0px;
+  font-size: 2rem;
+  margin-bottom: -25px;
   font-weight: bold;
   color: #00ff00;
   text-shadow: 0 0 10px #00ff00, 0 0 20px #00ff00;
   animation: pulseVerde 1s infinite alternate;
 }
 
-/* Animação pulsante verde */
 @keyframes pulseVerde {
-  0% {
-    transform: scale(1);
-    opacity: 1;
-    text-shadow: 0 0 10px #00ff00;
-  }
-  100% {
-    transform: scale(1.05);
-    opacity: 0.85;
-    text-shadow: 0 0 20px #00ff00;
-  }
+  0% { transform: scale(1); opacity: 1; text-shadow: 0 0 10px #00ff00; }
+  100% { transform: scale(1.05); opacity: 0.85; text-shadow: 0 0 20px #00ff00; }
+}
+
+/* === FULLSCREEN DO CARD FINALIZADO (sobrepõe tudo) === */
+.destaque-finalizado{
+  position: fixed !important;     /* tira do fluxo e gruda na tela */
+  inset: 0 !important;            /* top/right/bottom/left = 0 */
+  width: 100vw !important;
+  height: 100vh !important;
+  margin: 0 !important;
+  border-radius: 0 !important;
+  padding: clamp(24px, 4vh, 56px) !important;
+
+  /* fundo escuro para destacar */
+  background: rgba(10,10,10,0.92) !important;
+  backdrop-filter: blur(2px);
+
+  /* centraliza o conteúdo do card */
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(16px, 3vw, 48px);
+
+  z-index: 10000 !important;      /* acima de topo/rodapé/alertas */
+  animation: brilhoNeon 1s infinite, zoomPulse 0.8s infinite alternate, fadeFullscreenIn .25s ease-out;
+  transform: none !important;     /* evita deslocar para fora */
+  box-sizing: border-box;
+}
+
+/* Tipografia maior quando em tela cheia */
+.destaque-finalizado h3{
+  font-size: clamp(3rem, 6vw, 6.5rem) !important;
+  line-height: 1.05;
+}
+
+.destaque-finalizado p{
+  font-size: clamp(1.8rem, 3vw, 3rem) !important;
+  line-height: 1.2;
+  margin: .4em 0 !important;
+}
+
+.destaque-finalizado .miniatura{
+  width: clamp(140px, 18vw, 260px) !important;
+  height: auto !important;
+  flex-shrink: 0;
+  filter: drop-shadow(0 0 6px white);
+}
+
+/* Evita que o fundo role enquanto o overlay está visível (opcional) */
+body:has(.destaque-finalizado){
+  overflow: hidden;
+}
+
+/* Entrada suave do overlay */
+@keyframes fadeFullscreenIn{
+  from{ opacity: 0 }
+  to{ opacity: 1 }
 }

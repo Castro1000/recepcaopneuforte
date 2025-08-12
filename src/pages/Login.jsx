@@ -2,35 +2,66 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../services/api';
 
-
 const Login = () => {
   const [usuario, setUsuario] = useState('');
   const [senha, setSenha] = useState('');
   const [erro, setErro] = useState('');
+  const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
   const handleLogin = async (e) => {
     e.preventDefault();
     setErro('');
 
+    if (!usuario || !senha) {
+      setErro('Informe usuário e senha.');
+      return;
+    }
+
     try {
+      setLoading(true);
       const { data } = await api.post('/api/login', { usuario, senha });
-      const { token, tipo } = data;
+
+      // Aceita { token, tipo } ou { ok, token, user:{ perfil } }
+      const token = data?.token;
+      const tipo = data?.tipo || data?.user?.perfil;
+
+      if (!token) {
+        setErro('Resposta inesperada do servidor.');
+        return;
+      }
 
       localStorage.setItem('token', token);
       localStorage.setItem('usuario', usuario);
-      localStorage.setItem('tipo', tipo);
+      if (tipo) localStorage.setItem('tipo', tipo);
+      if (data?.user) localStorage.setItem('user', JSON.stringify(data.user));
 
-      if (tipo === 'recepcao') {
+      const perfil = (tipo || '').toString().toLowerCase();
+
+      if (['recepcao', 'recepção', 'painel', 'tv'].includes(perfil)) {
         navigate('/painel');
-      } else if (tipo === 'vendedor') {
+      } else if (['vendedor', 'balcao', 'balcão'].includes(perfil)) {
         navigate('/balcao');
+      } else if (['admin', 'administrador'].includes(perfil)) {
+        navigate('/admin');
       } else {
-        setErro('Tipo de usuário não reconhecido');
+        navigate('/balcao'); // fallback
       }
     } catch (err) {
-      console.error(err);
-      setErro('Usuário ou senha inválidos');
+      const status = err?.response?.status;
+      const msg = err?.response?.data?.message;
+
+      if (status === 401) setErro('Usuário ou senha inválidos');
+      else if (status === 400) setErro('Informe usuário e senha.');
+      else if (msg === 'DB_ERROR') setErro('Falha na conexão com o banco. Tente novamente.');
+      else if (err?.code === 'ERR_NETWORK' || err?.code === 'ECONNABORTED') {
+        setErro('Servidor indisponível no momento. Tente novamente em instantes.');
+      } else {
+        setErro(`Erro no servidor${status ? ` (${status})` : ''}.`);
+      }
+      console.error('[LOGIN ERROR]', err);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -45,6 +76,7 @@ const Login = () => {
             value={usuario}
             onChange={(e) => setUsuario(e.target.value)}
             style={styles.input}
+            autoComplete="username"
           />
           <input
             type="password"
@@ -52,8 +84,15 @@ const Login = () => {
             value={senha}
             onChange={(e) => setSenha(e.target.value)}
             style={styles.input}
+            autoComplete="current-password"
           />
-          <button type="submit" style={styles.button}>Entrar</button>
+          <button
+            type="submit"
+            style={{ ...styles.button, opacity: loading ? 0.7 : 1 }}
+            disabled={loading}
+          >
+            {loading ? 'Entrando...' : 'Entrar'}
+          </button>
           {erro && <p style={styles.erro}>{erro}</p>}
         </form>
       </div>
@@ -91,8 +130,9 @@ const styles = {
   input: {
     padding: '10px',
     fontSize: '16px',
-    border: '1px solid #ccc',
+    border: '1px solid #ccc', // <-- corrigido
     borderRadius: '5px',
+    outline: 'none',
   },
   button: {
     padding: '10px',
