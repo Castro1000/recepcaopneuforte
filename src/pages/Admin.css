@@ -1,0 +1,111 @@
+:root{
+  --bg:#0f1623;
+  --panel:#191f2e;
+  --muted:#9aa4b2;
+  --text:#e6ebf3;
+  --brand:#7c3aed;
+  --brand-2:#22d3ee;
+  --ok:#16a34a;
+  --open:#f59e0b;
+  --stroke:rgba(255,255,255,.08);
+}
+
+*{ box-sizing: border-box; }
+body{ background: var(--bg); color: var(--text); }
+
+.admin-shell{
+  display:flex; flex-direction:column; gap:16px;
+  padding:20px; min-height:100vh;
+}
+
+.admin-topbar{
+  display:flex; align-items:center; justify-content:space-between;
+  background: var(--panel); border:1px solid var(--stroke); border-radius:14px;
+  padding:14px 16px;
+}
+.admin-title{ font-size:20px; font-weight:800; letter-spacing:.3px; }
+.admin-actions{ display:flex; gap:10px; }
+
+.btn{
+  background:#2a3346; color:#fff; border:1px solid var(--stroke);
+  padding:10px 14px; border-radius:10px; cursor:pointer; font-weight:700;
+}
+.btn:hover{ filter: brightness(1.08); }
+.btn.primary{ background: linear-gradient(90deg,var(--brand), var(--brand-2)); border:none; }
+.btn.ghost{ background:transparent; }
+
+.admin-filters{
+  display:grid; gap:12px; grid-template-columns: repeat(6, minmax(0, 1fr));
+  background: var(--panel); border:1px solid var(--stroke); border-radius:14px;
+  padding:14px;
+}
+.admin-filters .field{ display:flex; flex-direction:column; gap:6px; }
+.admin-filters .field.buttons{ align-self:end; }
+.admin-filters label{ color: var(--muted); font-size:12px; text-transform:uppercase; }
+.admin-filters input, .admin-filters select{
+  background:#0f1522; color:#fff; border:1px solid var(--stroke); border-radius:10px;
+  padding:10px 12px; outline:none;
+}
+
+.admin-kpis{
+  display:grid; gap:12px; grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+.kpi-card{
+  background: var(--panel); border:1px solid var(--stroke); border-radius:14px;
+  padding:14px 16px; min-height:82px;
+  display:flex; flex-direction:column; justify-content:center; gap:6px;
+}
+.kpi-card.wide{ grid-column: span 2 / span 2; }
+.kpi-label{ color: var(--muted); font-size:12px; text-transform:uppercase; }
+.kpi-value{ font-size:26px; font-weight:900; letter-spacing:.4px; }
+
+.admin-charts{
+  display:grid; gap:12px; grid-template-columns: 2fr 1.4fr;
+}
+.chart-card{
+  background: var(--panel); border:1px solid var(--stroke); border-radius:14px;
+  padding:14px 16px;
+}
+.chart-title{ font-weight:800; margin-bottom:12px; }
+
+.bars{ display:flex; gap:10px; align-items:flex-end; min-height:120px; }
+.bar{ display:flex; flex-direction:column; gap:4px; align-items:center; }
+.bar-fill{ width:18px; background: linear-gradient(180deg,var(--brand),var(--brand-2));
+  border-radius:6px; }
+.bar-x{ font-size:12px; color:var(--muted); }
+.bar-y{ font-size:11px; opacity:.8; }
+
+.list-bars{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:8px; }
+.list-bars li{ display:grid; grid-template-columns: 1fr auto 40px; gap:10px; align-items:center; }
+.lb-name{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.lb-bar i{ display:block; height:10px; border-radius:6px; background:linear-gradient(90deg,var(--brand),var(--brand-2)); }
+.lb-val{ text-align:right; }
+
+.admin-table{ background: var(--panel); border:1px solid var(--stroke); border-radius:14px; }
+.table-wrap{ overflow:auto; max-height: 60vh; }
+table{ width:100%; border-collapse:separate; border-spacing:0; }
+thead th{
+  position: sticky; top:0; background:#141a29; z-index:1;
+  text-align:left; font-size:12px; color:var(--muted);
+  padding:10px 12px; border-bottom:1px solid var(--stroke);
+}
+tbody td{
+  padding:10px 12px; border-bottom:1px solid var(--stroke); vertical-align:top;
+}
+td.wrap{ white-space: normal; word-break: break-word; }
+
+.badge{
+  display:inline-block; padding:4px 8px; border-radius:999px; font-weight:800; font-size:12px;
+}
+.badge.ok{ background:#093; }
+.badge.open{ background:#8a5d00; }
+
+.error{
+  padding:10px 12px; color:#fff; background:#a00; border-radius:10px; margin:10px;
+}
+
+@media (max-width: 1024px) {
+  .admin-filters{ grid-template-columns: repeat(2, 1fr); }
+  .admin-kpis{ grid-template-columns: repeat(2, 1fr); }
+  .admin-charts{ grid-template-columns: 1fr; }
+}
