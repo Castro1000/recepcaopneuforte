@@ -1,3 +1,4 @@
+/* ===== Reset & base ===== */
 body, html, #root {
   margin: 0;
   padding: 0;
@@ -5,12 +6,15 @@ body, html, #root {
   font-family: 'Segoe UI', sans-serif;
 }
 
+/* usa 100dvh pra lidar melhor com barra de endereço no navegador */
 .balcao-container {
   display: flex;
-  height: 100vh;
+  height: 100dvh;
   width: 100vw;
+  overflow: hidden; /* cada lado rola independentemente */
 }
 
+/* ===== Colunas ===== */
 .cadastro-section,
 .fila-section {
   flex: 1;
@@ -18,25 +22,32 @@ body, html, #root {
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
+  gap: 16px;
 }
 
+/* ---------- Coluna ESQUERDA (Cadastro) ---------- */
 .cadastro-section {
   background-color: #111;
   color: #fff;
-  justify-content: center;
   align-items: center;
+  justify-content: flex-start;   /* não centraliza verticalmente */
+  overflow-y: auto;              /* rola quando expandir serviços */
+  margin-top: 0;                 /* sem corte */
 }
 
+/* título */
 .cadastro-section h1 {
-  margin-bottom: 20px;
+  margin: 10px 0 10px;
 }
 
+/* form */
 .cadastro-section form {
   width: 100%;
   max-width: 400px;
   display: flex;
   flex-direction: column;
   gap: 10px;
+  padding-bottom: 24px; /* respiro pro botão não colar no fim */
 }
 
 .cadastro-section input,
@@ -45,6 +56,8 @@ body, html, #root {
   border: none;
   border-radius: 5px;
   font-size: 16px;
+  background: #fff;
+  color: #000;
 }
 
 .cadastro-section button {
@@ -58,16 +71,18 @@ body, html, #root {
   cursor: pointer;
 }
 
+/* mensagens simples (ainda usamos o modal para alertas) */
 .mensagem {
   margin-top: 15px;
   color: #00e676;
   font-weight: bold;
 }
 
+/* ---------- Coluna DIREITA (Fila) ---------- */
 .fila-section {
   background: linear-gradient(to bottom, #0f2027, #203a43, #2c5364);
   color: #fff;
-  overflow-y: auto;
+  overflow-y: auto; /* rolagem da lista */
 }
 
 .fila-section h2 {
@@ -75,41 +90,86 @@ body, html, #root {
   margin-bottom: 20px;
 }
 
+/* ===== LISTA ocupa toda a coluna ===== */
 .carros-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 20px;
+  display: flex;               /* lista vertical */
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;                 /* ocupa toda a área */
+  max-width: none;             /* remove limite de 900px */
+  margin: 0;                   /* sem centralização */
   padding-bottom: 40px;
 }
 
+/* ===== Card em linha: infos | botão (sem miniatura) ===== */
 .carro-card {
-  padding: 18px;
+  width: 100%;
+  display: grid;
+  grid-template-columns: 1fr auto;  /* só infos e ação */
+  align-items: start;               /* << garante crescimento vertical das infos */
+  column-gap: 16px;
+  padding: 14px 16px;
   border-radius: 12px;
   box-shadow: 0 4px 12px rgba(0,0,0,0.3);
   transition: transform 0.2s ease, box-shadow 0.2s ease;
   position: relative;
+  min-height: 80px;
 }
 
-.carro-card:hover {
-  transform: scale(1.02);
-  box-shadow: 0 6px 16px rgba(0,0,0,0.4);
+/* remove completamente a “miniatura” */
+.carro-card::before {
+  content: none !important;
+  display: none !important;
 }
 
+/* textos do card — NUNCA cortar */
 .carro-card p {
-  margin: 6px 0;
+  grid-column: 1;        /* coluna de infos */
+  margin: 2px 0;
   font-size: 15px;
+  line-height: 1.25;
+  white-space: normal;    /* << quebra linha normalmente */
+  overflow: visible;      /* << nada de esconder */
+  word-break: break-word; /* << quebra palavras grandes */
+  overflow-wrap: anywhere;
 }
 
+/* botão “Finalizar” na coluna da direita */
 .carro-card button {
+  grid-column: 2;
+  justify-self: end;
+  align-self: center;
   background: linear-gradient(to right, #ff416c, #ff4b2b);
   color: white;
   border: none;
   padding: 10px 14px;
   border-radius: 5px;
-  margin-top: 12px;
+  margin: 0;
   font-weight: bold;
   font-size: 14px;
   cursor: pointer;
+}
+
+.carro-card:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(0,0,0,0.45);
+}
+
+/* ===== Serviços NÃO podem ser cortados ===== */
+.servicos-line {
+  /* era: white-space: nowrap; overflow: hidden; text-overflow: ellipsis; */
+  white-space: normal;     /* << permite múltiplas linhas */
+  overflow: visible;       /* << mostra tudo */
+  text-overflow: clip;     /* << sem reticências */
+  display: block;
+}
+
+/* responsivo opcional */
+@media (max-width: 600px) {
+  .carro-card {
+    grid-template-columns: 1fr auto;
+    padding: 12px;
+  }
 }
 
 /* ===== Overlay/Modal padrão ===== */
@@ -157,15 +217,12 @@ body, html, #root {
   font-size: 15px;
 }
 
-.btn-sim {
-  background-color: #28a745;
-  color: white;
-}
+.btn-sim { background-color: #28a745; color: white; }
+.btn-nao { background-color: #dc3545; color: white; }
 
-.btn-nao {
-  background-color: #dc3545;
-  color: white;
-}
+/* variação visual do modal de alerta */
+.confirmacao-central.modal-sucesso { border-top: 6px solid #28a745; }
+.confirmacao-central.modal-erro    { border-top: 6px solid #dc3545; }
 
 /* ===== Linha do serviço + botão ===== */
 .servico-row {
@@ -173,6 +230,7 @@ body, html, #root {
   align-items: center;
   gap: 8px;
 }
+.servico-row select { flex: 1; }
 
 /* Botão + (adicionar serviço) */
 .btn-add-servico {
@@ -192,29 +250,10 @@ body, html, #root {
   box-shadow: 0 6px 16px rgba(16,185,129,.35);
   transition: transform .08s ease, box-shadow .2s ease, filter .15s ease;
 }
-
-.btn-add-servico:hover { 
-  transform: translateY(-1px) scale(1.03);
-  box-shadow: 0 12px 24px rgba(16,185,129,.45);
-  filter: brightness(1.05);
-}
-
-.btn-add-servico:active {
-  transform: translateY(0) scale(.98);
-}
-
-.btn-add-servico:focus-visible {
-  outline: 2px solid #34d399;
-  outline-offset: 2px;
-  box-shadow: 0 0 0 4px rgba(16,185,129,.25);
-}
-
-.btn-add-servico[disabled] {
-  opacity: .55;
-  cursor: not-allowed;
-  filter: grayscale(.2);
-  box-shadow: none;
-}
+.btn-add-servico:hover { transform: translateY(-1px) scale(1.03); box-shadow: 0 12px 24px rgba(16,185,129,.45); }
+.btn-add-servico:active { transform: translateY(0) scale(.98); }
+.btn-add-servico:focus-visible { outline: 2px solid #34d399; outline-offset: 2px; box-shadow: 0 0 0 4px rgba(16,185,129,.25); }
+.btn-add-servico[disabled] { opacity: .55; cursor: not-allowed; filter: grayscale(.2); box-shadow: none; }
 
 /* Botão × (remover serviço extra) */
 .btn-remove-servico {
@@ -234,31 +273,11 @@ body, html, #root {
   box-shadow: 0 6px 16px rgba(185,28,28,.35);
   transition: transform .08s ease, box-shadow .2s ease, filter .15s ease;
 }
+.btn-remove-servico:hover { transform: translateY(-1px) scale(1.03); box-shadow: 0 12px 24px rgba(185,28,28,.45); }
+.btn-remove-servico:active { transform: translateY(0) scale(.98); }
+.btn-remove-servico:focus-visible { outline: 2px solid #f87171; outline-offset: 2px; box-shadow: 0 0 0 4px rgba(239,68,68,.25); }
 
-.btn-remove-servico:hover {
-  transform: translateY(-1px) scale(1.03);
-  box-shadow: 0 12px 24px rgba(185,28,28,.45);
-  filter: brightness(1.05);
-}
-
-.btn-remove-servico:active {
-  transform: translateY(0) scale(.98);
-}
-
-.btn-remove-servico:focus-visible {
-  outline: 2px solid #f87171;
-  outline-offset: 2px;
-  box-shadow: 0 0 0 4px rgba(239,68,68,.25);
-}
-
-/* o select dentro da linha do serviço ocupa o espaço restante */
-.servico-row select { flex: 1; }
-
-/* variação visual do modal de alerta */
-.confirmacao-central.modal-sucesso { border-top: 6px solid #28a745; }
-.confirmacao-central.modal-erro    { border-top: 6px solid #dc3545; }
-
-/* ===== botão de tempo no card ===== */
+/* ===== botão de tempo no card (se você usar) ===== */
 .btn-tempo {
   position: absolute;
   top: 8px;
@@ -275,7 +294,7 @@ body, html, #root {
 }
 .btn-tempo:hover { background: rgba(0,0,0,0.55); }
 
-/* ===== toasts de aviso (canto inferior direito) ===== */
+/* ===== toasts de aviso ===== */
 .toast-container {
   position: fixed;
   right: 16px;
@@ -299,13 +318,12 @@ body, html, #root {
   color: #000;
 }
 
-/* ====== Destaque quando ACIMA DA MÉDIA ====== */
+/* ===== Destaque quando ACIMA DA MÉDIA (se usar) ===== */
 .carro-card.card-acima {
   outline: 3px solid #ffb703;
   box-shadow: 0 0 0 4px rgba(255,183,3,0.25), 0 12px 28px rgba(0,0,0,.45);
   animation: alertGlow 1.4s ease-in-out infinite;
 }
-
 @keyframes alertGlow {
   0%   { box-shadow: 0 0 0 2px rgba(255,183,3,0.2), 0 8px 18px rgba(0,0,0,.35); }
   50%  { box-shadow: 0 0 0 6px rgba(255,183,3,0.35), 0 16px 36px rgba(0,0,0,.5); }
@@ -328,8 +346,7 @@ body, html, #root {
   letter-spacing: .5px;
 }
 
-/* (opcional) destacar visualmente o serviço atrasado na linha */
-.servicos-line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* (opcional) tags de serviço */
 .serv-tag {
   display: inline-block;
   padding: 2px 6px;
@@ -341,4 +358,21 @@ body, html, #root {
   background: linear-gradient(90deg, #ffb703, #fb8500);
   color: #000;
   font-weight: 800;
+}
+
+/* ===== Efeito de piscar para o card de destaque (finalizado) ===== */
+@keyframes blinkCard {
+  0%, 100% { box-shadow: 0 0 0px rgba(255,255,255,0.0); transform: scale(1.00); }
+  50%       { box-shadow: 0 0 35px rgba(255,255,255,0.9); transform: scale(1.02); }
+}
+.destaque-card {
+  animation: blinkCard 1s ease-in-out infinite;
+}
+
+/* ===== Responsivo ===== */
+@media (max-width: 600px) {
+  .carro-card {
+    grid-template-columns: 1fr auto;
+    padding: 12px;
+  }
 }
