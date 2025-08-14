@@ -11,7 +11,7 @@ body, html, #root {
   display: flex;
   height: 100dvh;
   width: 100vw;
-  overflow: hidden; /* cada lado rola independentemente */
+  overflow: hidden; /* cada lado rola independentemente (mobile: sobrescrevo) */
 }
 
 /* ===== Colunas ===== */
@@ -30,15 +30,13 @@ body, html, #root {
   background-color: #111;
   color: #fff;
   align-items: center;
-  justify-content: flex-start;   /* não centraliza verticalmente */
-  overflow-y: auto;              /* rola quando expandir serviços */
-  margin-top: 0;                 /* sem corte */
+  justify-content: flex-start;
+  overflow-y: auto;
+  margin-top: 0;
 }
 
 /* título */
-.cadastro-section h1 {
-  margin: 10px 0 10px;
-}
+.cadastro-section h1 { margin: 10px 0 10px; }
 
 /* form */
 .cadastro-section form {
@@ -47,7 +45,7 @@ body, html, #root {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding-bottom: 24px; /* respiro pro botão não colar no fim */
+  padding-bottom: 24px;
 }
 
 .cadastro-section input,
@@ -71,7 +69,7 @@ body, html, #root {
   cursor: pointer;
 }
 
-/* mensagens simples (ainda usamos o modal para alertas) */
+/* mensagens simples */
 .mensagem {
   margin-top: 15px;
   color: #00e676;
@@ -82,7 +80,7 @@ body, html, #root {
 .fila-section {
   background: linear-gradient(to bottom, #0f2027, #203a43, #2c5364);
   color: #fff;
-  overflow-y: auto; /* rolagem da lista */
+  overflow-y: auto; /* mobile: deixo a página rolar inteira */
 }
 
 .fila-section h2 {
@@ -92,21 +90,21 @@ body, html, #root {
 
 /* ===== LISTA ocupa toda a coluna ===== */
 .carros-grid {
-  display: flex;               /* lista vertical */
+  display: flex;
   flex-direction: column;
   gap: 12px;
-  width: 100%;                 /* ocupa toda a área */
-  max-width: none;             /* remove limite de 900px */
-  margin: 0;                   /* sem centralização */
+  width: 100%;
+  max-width: none;
+  margin: 0;
   padding-bottom: 40px;
 }
 
-/* ===== Card em linha: infos | botão (sem miniatura) ===== */
+/* ===== Card em linha: infos | botão ===== */
 .carro-card {
   width: 100%;
   display: grid;
-  grid-template-columns: 1fr auto;  /* só infos e ação */
-  align-items: start;               /* << garante crescimento vertical das infos */
+  grid-template-columns: 1fr auto;
+  align-items: start;
   column-gap: 16px;
   padding: 14px 16px;
   border-radius: 12px;
@@ -116,25 +114,22 @@ body, html, #root {
   min-height: 80px;
 }
 
-/* remove completamente a “miniatura” */
-.carro-card::before {
-  content: none !important;
-  display: none !important;
-}
+/* remove “miniatura” */
+.carro-card::before { content: none !important; display: none !important; }
 
 /* textos do card — NUNCA cortar */
 .carro-card p {
-  grid-column: 1;        /* coluna de infos */
+  grid-column: 1;
   margin: 2px 0;
   font-size: 15px;
   line-height: 1.25;
-  white-space: normal;    /* << quebra linha normalmente */
-  overflow: visible;      /* << nada de esconder */
-  word-break: break-word; /* << quebra palavras grandes */
+  white-space: normal;
+  overflow: visible;
+  word-break: break-word;
   overflow-wrap: anywhere;
 }
 
-/* botão “Finalizar” na coluna da direita */
+/* botão “Finalizar” */
 .carro-card button {
   grid-column: 2;
   justify-self: end;
@@ -157,14 +152,13 @@ body, html, #root {
 
 /* ===== Serviços NÃO podem ser cortados ===== */
 .servicos-line {
-  /* era: white-space: nowrap; overflow: hidden; text-overflow: ellipsis; */
-  white-space: normal;     /* << permite múltiplas linhas */
-  overflow: visible;       /* << mostra tudo */
-  text-overflow: clip;     /* << sem reticências */
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
   display: block;
 }
 
-/* responsivo opcional */
+/* responsivo opcional (mantido) */
 @media (max-width: 600px) {
   .carro-card {
     grid-template-columns: 1fr auto;
@@ -202,11 +196,7 @@ body, html, #root {
   margin-bottom: 20px;
 }
 
-.botoes-confirmacao {
-  display: flex;
-  justify-content: space-between;
-  gap: 20px;
-}
+.botoes-confirmacao { display: flex; justify-content: space-between; gap: 20px; }
 
 .btn-sim, .btn-nao {
   padding: 10px 20px;
@@ -220,7 +210,6 @@ body, html, #root {
 .btn-sim { background-color: #28a745; color: white; }
 .btn-nao { background-color: #dc3545; color: white; }
 
-/* variação visual do modal de alerta */
 .confirmacao-central.modal-sucesso { border-top: 6px solid #28a745; }
 .confirmacao-central.modal-erro    { border-top: 6px solid #dc3545; }
 
@@ -230,6 +219,16 @@ body, html, #root {
   align-items: center;
   gap: 8px;
 }
+
+/* ⚠️ evita estouro horizontal: o select pode encolher dentro do flex */
+.servico-row select {
+  flex: 1 1 auto;
+  min-width: 0;     /* <- ESSENCIAL no mobile */
+}
+
+/* botão + nunca “expande” */
+.btn-add-servico { flex: 0 0 44px; }
+
 .servico-row select { flex: 1; }
 
 /* Botão + (adicionar serviço) */
@@ -360,19 +359,106 @@ body, html, #root {
   font-weight: 800;
 }
 
-/* ===== Efeito de piscar para o card de destaque (finalizado) ===== */
+/* ===== Efeito de piscar ===== */
 @keyframes blinkCard {
   0%, 100% { box-shadow: 0 0 0px rgba(255,255,255,0.0); transform: scale(1.00); }
   50%       { box-shadow: 0 0 35px rgba(255,255,255,0.9); transform: scale(1.02); }
 }
-.destaque-card {
-  animation: blinkCard 1s ease-in-out infinite;
+.destaque-card { animation: blinkCard 1s ease-in-out infinite; }
+
+/* ===== Responsivo (NOVO) ===== */
+
+/* Tablets (até ~1024px) */
+@media (max-width: 1024px) {
+  .cadastro-section,
+  .fila-section { padding: 28px; gap: 14px; }
+  .cadastro-section form { max-width: 560px; }
+  .carro-card p { font-size: 14.5px; }
+  .carro-card button { font-size: 14px; padding: 10px 12px; }
 }
 
-/* ===== Responsivo ===== */
-@media (max-width: 600px) {
-  .carro-card {
-    grid-template-columns: 1fr auto;
-    padding: 12px;
+/* Mobile (≤ 768px): empilha colunas e libera rolagem geral da página */
+@media (max-width: 768px) {
+  .balcao-container {
+    flex-direction: column;
+    height: auto;           /* <- libera crescimento */
+    min-height: 100dvh;
+    overflow: visible;      /* <- a página inteira rola */
   }
+
+  .cadastro-section,
+  .fila-section { padding: 18px 16px; gap: 12px; }
+
+  /* form confortável */
+  .cadastro-section form { max-width: 100%; }
+  .cadastro-section input,
+  .cadastro-section select { padding: 14px; font-size: 16px; }
+  .cadastro-section button { padding: 14px; font-size: 18px; }
+
+  /* linha serviço: grid estável no estreito */
+  .servico-row {
+    display: grid;
+    grid-template-columns: 1fr 48px; /* select + botão + */
+    gap: 8px;
+  }
+  .btn-add-servico { width: 48px; height: 48px; }
+  .servico-row select { min-width: 0; } /* reforço */
+
+  /* título da lista “gruda” no topo quando rola */
+  .fila-section {
+    overflow: visible;            /* <- usa rolagem global */
+  }
+  .fila-section h2 {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: linear-gradient(to bottom, #0f2027, #203a43, #2c5364);
+    padding: 8px 0 10px;
+    margin: 0 0 12px;
+  }
+
+  .carros-grid { gap: 10px; padding-bottom: 24px; }
+
+  /* card: botão ocupa a largura toda embaixo */
+  .carro-card { grid-template-columns: 1fr; row-gap: 10px; padding: 12px; }
+  .carro-card button {
+    grid-column: 1;
+    justify-self: stretch;
+    width: 100%;
+    padding: 12px;
+    font-size: 16px;
+  }
+}
+
+/* Mobile pequeno (≤ 420px) */
+@media (max-width: 420px) {
+  .cadastro-section h1 { font-size: 1.25rem; }
+  .cadastro-section input,
+  .cadastro-section select { font-size: 15px; }
+  .cadastro-section button { font-size: 16px; }
+
+  .carro-card p { font-size: 14px; }
+  .btn-add-servico,
+  .btn-remove-servico { width: 40px; height: 40px; }
+}
+
+/* Paisagem baixa */
+@media (max-height: 520px) and (orientation: landscape) {
+  .cadastro-section,
+  .fila-section { padding: 14px 16px; gap: 10px; }
+  .carro-card { padding: 10px 12px; }
+  .carro-card p { margin: 1px 0; }
+}
+
+/* Safe area iOS/Android */
+@supports (padding: max(0px)) {
+  .balcao-container {
+    padding-bottom: max(0px, env(safe-area-inset-bottom));
+    padding-top: max(0px, env(safe-area-inset-top));
+  }
+}
+
+/* (mantido) */
+@media (max-width: 600px) {
+  .carro-card { grid-template-columns: 1fr auto; padding: 12px; }
 }
