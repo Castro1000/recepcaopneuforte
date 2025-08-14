@@ -4,17 +4,22 @@ import { useEffect, useState, useRef } from 'react';
 import { io } from 'socket.io-client';
 
 // use o que preferir:
-//const API_BASE = 'http://localhost:3001';
+// const API_BASE = 'http://localhost:3001';
 const API_BASE = 'https://recepcaopneuforte.onrender.com';
 
 // de fora do componente para não reconectar toda hora
-const socket = io(API_BASE);
+const socket = io(API_BASE, { transports: ['websocket', 'polling'] });
 
 export default function Painel() {
   const [fila, setFila] = useState([]);
   const [carroAtual, setCarroAtual] = useState(0);
   const [carroFinalizado, setCarroFinalizado] = useState(null);
   const [emDestaque, setEmDestaque] = useState(false);
+
+  // ÁUDIO / AUTOPLAY
+  const [audioOk, setAudioOk] = useState(false);        // conseguimos tocar áudio sem gesto?
+  const [needsUnlock, setNeedsUnlock] = useState(false); // mostrar overlay "Pressione OK"?
+  const audioElemsRef = useRef({});                      // guarda instâncias de Audio
 
   const intervaloRef = useRef(null);
   const timeoutDestaqueRef = useRef(null);
@@ -49,9 +54,75 @@ export default function Painel() {
     }
   };
 
-  // 1) carga inicial
+  // -------- áudio: pré-aquecimento para tentar liberar autoplay --------
+  const prewarmAudio = async () => {
+    // cria elementos e dá um "play" MUTED + pause (eleva engajamento em vários navegadores)
+    const busina1 = new Audio('/busina.mp3');
+    const motor   = new Audio('/motor.mp3');
+    const freiada = new Audio('/freiada.mp3');
+    const busina2 = new Audio('/busina.mp3');
+
+    const audios = [busina1, motor, freiada, busina2];
+    audioElemsRef.current = { busina1, motor, freiada, busina2 };
+
+    try {
+      for (const a of audios) {
+        a.muted = true;
+        a.volume = 0;
+        // Alguns navegadores exigem que a mídia esteja carregada antes do play
+        await a.play().catch(() => {});
+        a.pause();
+        a.currentTime = 0;
+        a.muted = false;
+        a.volume = 1.0;
+      }
+      // se chegamos aqui, em muitos casos conseguimos tocar depois sem gesto
+      setAudioOk(true);
+    } catch {
+      // se falhar, deixamos audioOk como está (false) — e usamos o fallback se necessário
+      setAudioOk(false);
+    }
+  };
+
+  // Tenta tocar um áudio e retorna true/false se conseguiu
+  const tryPlay = async (audio) => {
+    try {
+      await audio.play();
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  // Desbloqueio via controle remoto (OK/setas geram keydown)
+  const unlockByKey = async () => {
+    // tenta tocar uma buzininha rapidinha como “gesto”
+    const a = audioElemsRef.current.busina1 || new Audio('/busina.mp3');
+    const ok = await tryPlay(a);
+    if (ok) {
+      setAudioOk(true);
+      setNeedsUnlock(false);
+    }
+  };
+
+  // 1) carga inicial + pré-aquecimento de áudio
   useEffect(() => {
     buscarFila();
+    prewarmAudio();
+
+    // se o navegador bloquear, ouvimos qualquer tecla do controle
+    const onKey = () => unlockByKey();
+    window.addEventListener('keydown', onKey, { passive: true });
+
+    // em algumas TVs, visibilitychange ajuda a “acordar” áudio quando a aba fica ativa
+    const onVis = () => { if (document.visibilityState === 'visible' && !audioOk) prewarmAudio(); };
+    document.addEventListener('visibilitychange', onVis);
+
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // 2) carrossel rotativo (pausa quando tem destaque)
@@ -71,55 +142,39 @@ export default function Painel() {
 
   // 3) sockets: finalização + novo carro (REGISTRA UMA VEZ)
   useEffect(() => {
-    const onCarroFinalizado = (carro) => {
+    const onCarroFinalizado = async (carro) => {
       setCarroFinalizado(carro);
       setEmDestaque(true);
 
-      // sons (mantidos)
-      const busina1 = new Audio('/busina.mp3');
-      const motor = new Audio('/motor.mp3');
-      const freiada = new Audio('/freiada.mp3');
-      const busina2 = new Audio('/busina.mp3');
-
+      // Sons na sequência (com fallback para desbloqueio)
+      const { busina1, motor, freiada, busina2 } = audioElemsRef.current;
       try {
-        motor.play().catch(() => {});
-        busina1.play().catch(() => {});
-
-        motor.onloadedmetadata = () => {
-          const meioMotor = (motor.duration / 2) * 1000;
-          setTimeout(() => freiada.play().catch(() => {}), meioMotor);
-        };
-
-        motor.onended = () => {
-          busina2.play().catch(() => {});
-          busina2.onended = () => {
-            const ajustarLetra = (letra) => {
-              const mapa = { Q: 'quê', W: 'dáblio', Y: 'ípsilon', E: 'é' };
-              return mapa[letra.toUpperCase()] || letra.toUpperCase();
+        // tenta tocar; se primeiro falhar, mostra overlay para apertar OK
+        let ok = await tryPlay(motor || new Audio('/motor.mp3'));
+        if (!ok) {
+          setNeedsUnlock(true); // mostra “Pressione OK”
+          // não retornamos; deixamos o overlay e, assim que o usuário apertar OK,
+          // os próximos eventos tocarão normalmente
+        } else {
+          // sequência
+          await tryPlay(busina1 || new Audio('/busina.mp3'));
+          if (motor) {
+            motor.onloadedmetadata = () => {
+              const meioMotor = (motor.duration / 2) * 1000;
+              setTimeout(() => { tryPlay(freiada || new Audio('/freiada.mp3')); }, meioMotor);
             };
-            const placaSeparada = (carro.placa || '')
-              .toString()
-              .toUpperCase()
-              .split('')
-              .map(ajustarLetra)
-              .join(' ');
-
-            const modeloCorrigido = corrigirPronunciaModelo(carro.modelo);
-            const frase = `Carro ${modeloCorrigido}, placa ${placaSeparada}, cor ${carro.cor}, dirija-se ao caixa.`;
-
-            const falar = (texto) => {
-              if (!('speechSynthesis' in window)) return;
-              const u = new SpeechSynthesisUtterance(texto);
-              u.lang = 'pt-BR';
-              u.volume = 1;
-              u.rate = 1.0;
-              window.speechSynthesis.speak(u);
+          }
+          // quando “motor” acabar, buzina e TTS
+          if (motor) {
+            motor.onended = async () => {
+              await tryPlay(busina2 || new Audio('/busina.mp3'));
+              anunciarCarro(carro);
             };
-
-            falar(frase);
-            setTimeout(() => falar(frase), 2500);
-          };
-        };
+          } else {
+            // sem instância pré-criada, chamamos o TTS com pequeno atraso
+            setTimeout(() => anunciarCarro(carro), 800);
+          }
+        }
       } catch (e) {
         console.warn('Erro no áudio/fala:', e);
       }
@@ -149,17 +204,70 @@ export default function Painel() {
       socket.off('novoCarroAdicionado', onNovoCarroAdicionado);
       if (timeoutDestaqueRef.current) clearTimeout(timeoutDestaqueRef.current);
     };
-  }, []); // <-- registra listeners só 1x
+  }, []);
 
   // 4) Guard extra: se por algum motivo carroFinalizado sumir, desliga overlay
   useEffect(() => {
     if (!carroFinalizado && emDestaque) setEmDestaque(false);
   }, [carroFinalizado, emDestaque]);
 
+  const anunciarCarro = (carro) => {
+    try {
+      if (!('speechSynthesis' in window)) return;
+      const ajustarLetra = (letra) => {
+        const mapa = { Q: 'quê', W: 'dáblio', Y: 'ípsilon', E: 'é' };
+        return mapa[letra.toUpperCase()] || letra.toUpperCase();
+      };
+      const placaSeparada = (carro.placa || '')
+        .toString()
+        .toUpperCase()
+        .split('')
+        .map(ajustarLetra)
+        .join(' ');
+      const modeloCorrigido = corrigirPronunciaModelo(carro.modelo);
+      const frase = `Carro ${modeloCorrigido}, placa ${placaSeparada}, cor ${carro.cor}, dirija-se ao caixa.`;
+
+      const falar = (texto) => {
+        const u = new SpeechSynthesisUtterance(texto);
+        u.lang = 'pt-BR';
+        u.volume = 1;
+        u.rate = 1.0;
+        window.speechSynthesis.speak(u);
+      };
+
+      falar(frase);
+      setTimeout(() => falar(frase), 2500);
+    } catch (e) {
+      console.warn('Erro no TTS:', e);
+    }
+  };
+
   const carroDestaque = carroFinalizado || fila[carroAtual];
 
   return (
     <div className="painel">
+      {/* Overlay de desbloqueio (só aparece se precisar) */}
+      {needsUnlock && (
+        <div
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,.85)',
+            zIndex: 99999, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            textAlign: 'center', padding: 24
+          }}
+          // também capturamos clique caso a TV dispare "OK" como click
+          onClick={unlockByKey}
+        >
+          <div>
+            <div style={{ fontSize: '3rem', color: '#0ff', textShadow: '0 0 10px #0ff', fontWeight: 800 }}>
+              Pressione <span style={{ color: '#fff' }}>OK</span> no controle
+            </div>
+            <div style={{ fontSize: '1.5rem', color: '#ddd', marginTop: 12 }}>
+              para habilitar os sons das chamadas
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="topo">
         {/* ESQUERDA: logo */}
         <div className="titulo" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -191,7 +299,6 @@ export default function Painel() {
             <div className="conteudo-finalizado">
               <img
                 src={carroFinalizado ? '/img/finalizado.gif' : '/img/carro_pneu_forte.png'}
-                /* ↑ usa o GIF /public/finalizado.gif quando em destaque */
                 alt="Carro"
                 className="imagem-principal"
               />
