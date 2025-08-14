@@ -8,11 +8,6 @@ const { Server } = require('socket.io');
 const db = require('./db');
 const notaRoutes = require('./notaRoutes');
 
-// >>> TTS
-const googleTTS = require('google-tts-api');
-// Se seu Node < 18 não tiver fetch global, descomente a linha abaixo:
-// const fetch = (...args) => import('node-fetch').then(({default: f}) => f(...args));
-
 const app = express();
 const server = http.createServer(app);
 
@@ -55,37 +50,6 @@ app.set('io', io);
 
 // --------- Rotas ---------
 app.use('/api', notaRoutes);
-
-// >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-// ROTA TTS (Text-to-Speech) - devolve áudio MP3 em pt-BR
-app.get('/api/tts', async (req, res) => {
-  try {
-    const text = String(req.query.text || '').trim();
-    if (!text) return res.status(400).send('missing text');
-
-    // Google aceita ~200 caracteres por request
-    const safe = text.slice(0, 200);
-
-    const url = googleTTS.getAudioUrl(safe, {
-      lang: 'pt-BR',
-      slow: false,
-      host: 'https://translate.google.com',
-    });
-
-    const r = await fetch(url);
-    if (!r.ok) return res.sendStatus(502);
-
-    res.setHeader('Content-Type', 'audio/mpeg');
-    res.setHeader('Cache-Control', 'public, max-age=300');
-
-    // stream do MP3 para o cliente
-    r.body.pipe(res);
-  } catch (e) {
-    console.error('TTS error:', e);
-    res.sendStatus(500);
-  }
-});
-// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
 // Healthcheck
 app.get('/api/health', async (_req, res) => {
