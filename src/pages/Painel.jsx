@@ -3,133 +3,23 @@ import axios from 'axios';
 import { useEffect, useState, useRef } from 'react';
 import { io } from 'socket.io-client';
 
-const socket = io('https://recepcaopneuforte.onrender.com');
-//const socket = io('http://localhost:3001');
+// use o que preferir:
+//const API_BASE = 'http://localhost:3001';
+const API_BASE = 'https://recepcaopneuforte.onrender.com';
+
+// de fora do componente para não reconectar toda hora
+const socket = io(API_BASE);
 
 export default function Painel() {
   const [fila, setFila] = useState([]);
   const [carroAtual, setCarroAtual] = useState(0);
   const [carroFinalizado, setCarroFinalizado] = useState(null);
   const [emDestaque, setEmDestaque] = useState(false);
+
   const intervaloRef = useRef(null);
+  const timeoutDestaqueRef = useRef(null);
 
-  useEffect(() => {
-    const buscarFila = async () => {
-      try {
-        const response = await axios.get('https://recepcaopneuforte.onrender.com/api/fila-servico');
-        //const response = await axios.get('http://localhost:3001/api/fila-servico');
-        if (Array.isArray(response.data)) {
-          setFila(response.data.slice(0, 7));
-        } else {
-          console.error('A resposta da API não é um array:', response.data);
-        }
-      } catch (error) {
-        console.error('Erro ao buscar fila:', error);
-      }
-    };
-
-    buscarFila();
-  }, []);
-
-  useEffect(() => {
-    if (intervaloRef.current) clearInterval(intervaloRef.current);
-
-    if (fila.length > 1 && !carroFinalizado) {
-      intervaloRef.current = setInterval(() => {
-        setCarroAtual((prev) => (prev + 1) % fila.length);
-      }, 6000);
-    } else {
-      setCarroAtual(0);
-    }
-
-    return () => clearInterval(intervaloRef.current);
-  }, [fila, carroFinalizado]);
-
-  useEffect(() => {
-    const fetchFila = async () => {
-      try {
-        const response = await axios.get('https://recepcaopneuforte.onrender.com/api/fila-servico');
-        //const response = await axios.get('http://localhost:3001/api/fila-servico');
-        if (Array.isArray(response.data)) setFila(response.data.slice(0, 7));
-      } catch (error) {
-        console.error('Erro ao atualizar fila via socket:', error);
-      }
-    };
-
-    socket.on('carroFinalizado', async (carro) => {
-      setCarroFinalizado(carro);
-      setEmDestaque(true);
-
-      const busina1 = new Audio('/busina.mp3');
-      const motor = new Audio('/motor.mp3');
-      const freiada = new Audio('/freiada.mp3');
-      const busina2 = new Audio('/busina.mp3');
-
-      try {
-        motor.play();
-        busina1.play();
-
-        motor.onloadedmetadata = () => {
-          const meioMotor = (motor.duration / 2) * 1000;
-          setTimeout(() => freiada.play(), meioMotor);
-        };
-
-        motor.onended = () => {
-          busina2.play();
-          busina2.onended = () => {
-            const ajustarLetra = (letra) => {
-              const mapa = { Q: 'quê', W: 'dáblio', Y: 'ípsilon', E: 'é' };
-              return mapa[letra.toUpperCase()] || letra.toUpperCase();
-            };
-            const placaSeparada = carro.placa
-              ?.toString()
-              .toUpperCase()
-              .split('')
-              .map(ajustarLetra)
-              .join(' ');
-
-            const modeloCorrigido = corrigirPronunciaModelo(carro.modelo);
-            const frase = `Carro ${modeloCorrigido}, placa ${placaSeparada}, cor ${carro.cor}, dirija-se ao caixa.`;
-
-            const falar = (texto) => {
-              const u = new SpeechSynthesisUtterance(texto);
-              u.lang = 'pt-BR';
-              u.volume = 1.5;
-              u.rate = 1.0;
-              speechSynthesis.speak(u);
-            };
-
-            falar(frase);
-            setTimeout(() => falar(frase), 2500);
-          };
-        };
-      } catch (e) {
-        console.warn('Erro no áudio ou fala:', e);
-      }
-
-      setFila((prevFila) => {
-        const novaFila = prevFila.filter((c) => c.id !== carro.id);
-        if (carroAtual >= novaFila.length) setCarroAtual(0);
-        return novaFila;
-      });
-
-      setTimeout(() => {
-        setCarroFinalizado(null);
-        setEmDestaque(false);
-      }, 30000);
-    });
-
-    socket.on('novoCarroAdicionado', () => {
-      fetchFila();
-    });
-
-    return () => {
-      socket.off('carroFinalizado');
-      socket.off('novoCarroAdicionado');
-    };
-  }, [carroAtual]);
-
-  // Corrige pronúncia de alguns modelos
+  // -------- helpers --------
   const corrigirPronunciaModelo = (modelo) => {
     const m = (modelo || '').toString().trim();
     const upper = m.toUpperCase();
@@ -146,11 +36,127 @@ export default function Painel() {
     }
   };
 
-  const carroDestaque = carroFinalizado || fila[carroAtual];
-
-  // helper para montar "SERV1 | SERV2 | SERV3"
   const montaServicos = (c) =>
     [c?.servico, c?.servico2, c?.servico3].filter(Boolean).join(' | ');
+
+  const buscarFila = async () => {
+    try {
+      const { data } = await axios.get(`${API_BASE}/api/fila-servico`);
+      if (Array.isArray(data)) setFila(data.slice(0, 7));
+      else console.error('A resposta da API não é um array:', data);
+    } catch (err) {
+      console.error('Erro ao buscar fila:', err);
+    }
+  };
+
+  // 1) carga inicial
+  useEffect(() => {
+    buscarFila();
+  }, []);
+
+  // 2) carrossel rotativo (pausa quando tem destaque)
+  useEffect(() => {
+    if (intervaloRef.current) clearInterval(intervaloRef.current);
+
+    if (fila.length > 1 && !carroFinalizado) {
+      intervaloRef.current = setInterval(() => {
+        setCarroAtual((prev) => (prev + 1) % fila.length);
+      }, 6000);
+    } else {
+      setCarroAtual(0);
+    }
+
+    return () => clearInterval(intervaloRef.current);
+  }, [fila, carroFinalizado]);
+
+  // 3) sockets: finalização + novo carro (REGISTRA UMA VEZ)
+  useEffect(() => {
+    const onCarroFinalizado = (carro) => {
+      setCarroFinalizado(carro);
+      setEmDestaque(true);
+
+      // sons (mantidos)
+      const busina1 = new Audio('/busina.mp3');
+      const motor = new Audio('/motor.mp3');
+      const freiada = new Audio('/freiada.mp3');
+      const busina2 = new Audio('/busina.mp3');
+
+      try {
+        motor.play().catch(() => {});
+        busina1.play().catch(() => {});
+
+        motor.onloadedmetadata = () => {
+          const meioMotor = (motor.duration / 2) * 1000;
+          setTimeout(() => freiada.play().catch(() => {}), meioMotor);
+        };
+
+        motor.onended = () => {
+          busina2.play().catch(() => {});
+          busina2.onended = () => {
+            const ajustarLetra = (letra) => {
+              const mapa = { Q: 'quê', W: 'dáblio', Y: 'ípsilon', E: 'é' };
+              return mapa[letra.toUpperCase()] || letra.toUpperCase();
+            };
+            const placaSeparada = (carro.placa || '')
+              .toString()
+              .toUpperCase()
+              .split('')
+              .map(ajustarLetra)
+              .join(' ');
+
+            const modeloCorrigido = corrigirPronunciaModelo(carro.modelo);
+            const frase = `Carro ${modeloCorrigido}, placa ${placaSeparada}, cor ${carro.cor}, dirija-se ao caixa.`;
+
+            const falar = (texto) => {
+              if (!('speechSynthesis' in window)) return;
+              const u = new SpeechSynthesisUtterance(texto);
+              u.lang = 'pt-BR';
+              u.volume = 1;
+              u.rate = 1.0;
+              window.speechSynthesis.speak(u);
+            };
+
+            falar(frase);
+            setTimeout(() => falar(frase), 2500);
+          };
+        };
+      } catch (e) {
+        console.warn('Erro no áudio/fala:', e);
+      }
+
+      // remove da fila e ajusta índice
+      setFila((prev) => {
+        const nova = prev.filter((c) => c.id !== carro.id);
+        setCarroAtual((idx) => (idx >= nova.length ? 0 : idx));
+        return nova;
+      });
+
+      // mantém o destaque por 30s e garante limpeza
+      if (timeoutDestaqueRef.current) clearTimeout(timeoutDestaqueRef.current);
+      timeoutDestaqueRef.current = setTimeout(() => {
+        setCarroFinalizado(null);
+        setEmDestaque(false);
+      }, 30000); // 30s
+    };
+
+    const onNovoCarroAdicionado = () => buscarFila();
+
+    socket.on('carroFinalizado', onCarroFinalizado);
+    socket.on('novoCarroAdicionado', onNovoCarroAdicionado);
+
+    return () => {
+      socket.off('carroFinalizado', onCarroFinalizado);
+      socket.off('novoCarroAdicionado', onNovoCarroAdicionado);
+      if (timeoutDestaqueRef.current) clearTimeout(timeoutDestaqueRef.current);
+    };
+  }, []); // <-- registra listeners só 1x
+
+  // 4) Guard extra: se por algum motivo carroFinalizado sumir, desliga overlay
+  useEffect(() => {
+    if (!carroFinalizado && emDestaque) setEmDestaque(false);
+  }, [carroFinalizado, emDestaque]);
+
+  const carroDestaque = carroFinalizado || fila[carroAtual];
 
   return (
     <div className="painel">
@@ -181,10 +187,11 @@ export default function Painel() {
 
       <div className="conteudo">
         <div className={`principal ${emDestaque ? 'destaque-finalizado' : ''}`}>
-          {carroDestaque && (
+          {carroDestaque ? (
             <div className="conteudo-finalizado">
               <img
-                src={carroFinalizado ? "/img/carro_finalizado.png" : "/img/carro_pneu_forte.png"}
+                src={carroFinalizado ? '/img/finalizado.gif' : '/img/carro_pneu_forte.png'}
+                /* ↑ usa o GIF /public/finalizado.gif quando em destaque */
                 alt="Carro"
                 className="imagem-principal"
               />
@@ -195,28 +202,36 @@ export default function Painel() {
                 <h2>{carroDestaque.modelo?.toUpperCase()}</h2>
                 <p>🔖 Placa: {carroDestaque.placa}</p>
                 <p>🎨 Cor: {carroDestaque.cor}</p>
-
-                {/* serviços unidos por | */}
                 <p>🔧 Serviços: {montaServicos(carroDestaque) || '-'}</p>
+              </div>
+            </div>
+          ) : (
+            <div className="conteudo-finalizado">
+              <img
+                src="/img/carro_pneu_forte.png"
+                alt="Carro"
+                className="imagem-principal"
+              />
+              <div className="info-carro">
+                <h2>Sem carros na fila</h2>
               </div>
             </div>
           )}
         </div>
 
         <div className="lista-lateral">
-          {fila.map((carro, index) => (
-            index !== carroAtual && (
+          {fila.map((carro, index) =>
+            index !== carroAtual ? (
               <div key={carro.id} className="card-lateral">
                 <img src="/img/carro_pneu_forte.png" alt="Carro" className="miniatura" />
                 <div>
-                  <h3>{carro.modelo?.toUpperCase()}</h3>
-                  <p>{carro.placa}</p>
-                  {/* serviços unidos por | */}
-                  <p>{montaServicos(carro) || '-'}</p>
+                  <h3> 🚘 {carro.modelo?.toUpperCase()} 🚘</h3>
+                  <p> 🔖 Placa: {carro.placa}</p>
+                  <p> 🔧 Serviços: {montaServicos(carro) || '-'}</p>
                 </div>
               </div>
-            )
-          ))}
+            ) : null
+          )}
         </div>
       </div>
 

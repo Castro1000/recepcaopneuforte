@@ -63,6 +63,7 @@ html, body {
   overflow: hidden;
 }
 
+/* PRINCIPAL vira flex container para centralizar quando sobrar espaço */
 .principal {
   flex: 1;
   background-color: #111;
@@ -73,6 +74,14 @@ html, body {
   box-shadow: 0 0 20px cyan;
   animation: fadeInUp 0.6s ease-in-out;
   min-width: 0;
+
+  /* NOVO: centralização inteligente */
+  display: flex;
+  flex-direction: column;
+
+  /* NOVO: habilita camadas decorativas animadas */
+  position: relative;
+  overflow: hidden;
 }
 
 .principal h2 {
@@ -85,28 +94,37 @@ html, body {
 
 .principal p {
   font-size: 2.2rem;
-  margin: 5px 10px;
+  margin: 0px 10px;
   color: #eee;
   text-shadow: 0 0 4px #f5f5f5;
   margin-top: -5px;
 }
 
 .imagem-principal {
-  width: 50%;
+  width: 45%;
   max-width: 300px;
   height: auto;             /* evita altura fixa que estoura */
   max-height: 38vh;         /* garante que não passe da área útil */
   object-fit: contain;
   margin: 0 auto;           /* remove margens negativas que empurravam */
   filter: drop-shadow(0 0 5px white);
-  margin-bottom: -20px;
+  margin-bottom: -30px;
+}
+
+/* NOVO: centraliza o bloco quando sobra espaço; se ficar alto, ele “sobe” */
+.conteudo-finalizado {
+  margin-top: auto;
+  margin-bottom: auto;
+  display: grid;
+  place-items: center;
+  gap: 8px;
 }
 
 .lista-lateral {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 10px;
   min-width: 0;
   overflow: hidden;
 }
@@ -115,7 +133,7 @@ html, body {
   background-color: #111;
   border: 2px solid cyan;
   border-radius: 10px;
-  padding: 15px;
+  padding: 5px 0px;
   display: flex;
   align-items: center;
   gap: 15px;
@@ -135,7 +153,7 @@ html, body {
 }
 
 .miniatura {
-  width: 70px;
+  width: 90px;
   height: auto;
   filter: drop-shadow(0 0 4px white);
   flex-shrink: 0;
@@ -246,7 +264,6 @@ html, body {
   to { top: 0; opacity: 1; }
 }
 
-
 .texto-finalizado {
   margin-top: 10px;
   font-size: 2rem;
@@ -263,8 +280,6 @@ html, body {
 }
 
 /* === FULLSCREEN DO CARD FINALIZADO (sobrepõe tudo) === */
-/* FULLSCREEN do card finalizado */
-/* FULLSCREEN do card finalizado */
 .destaque-finalizado{
   position: fixed !important;
   inset: 0 !important;            /* top/right/bottom/left = 0 */
@@ -280,22 +295,10 @@ html, body {
   justify-content: center;
   gap: clamp(16px, 3vw, 48px);
   z-index: 10000 !important;
-  animation: brilhoNeon 1s infinite, zoomPulse 0.8s infinite alternate, fadeFullscreenIn .25s ease-out;
-  transform: none !important;
+  animation: fadeFullscreenIn .25s ease-out;
   box-sizing: border-box;
-
 }
 
-.destaque-finalizado h3{ font-size: clamp(3rem, 6vw, 6.5rem) !important; }
-.destaque-finalizado p{  font-size: clamp(1.8rem, 3vw, 3rem) !important; margin:.4em 0 !important; }
-.destaque-finalizado .miniatura{ width: clamp(140px, 18vw, 260px) !important; height:auto !important; }
-@keyframes fadeFullscreenIn{ from{opacity:0} to{opacity:1} }
-body:has(.destaque-finalizado){ overflow: hidden; } /* opcional */
-
-
-
-
-/* Tipografia maior quando em tela cheia */
 .destaque-finalizado h3{
   font-size: clamp(3rem, 6vw, 6.5rem) !important;
   line-height: 1.05;
@@ -323,4 +326,201 @@ body:has(.destaque-finalizado){
 @keyframes fadeFullscreenIn{
   from{ opacity: 0 }
   to{ opacity: 1 }
+}
+
+/* ====== DECORAÇÕES ANIMADAS NO FUNDO DO CARD PRINCIPAL ====== */
+
+/* conteúdo do card sempre acima das camadas decorativas */
+.principal > * { position: relative; z-index: 1; }
+
+/* RASTROS DE PNEU (camada ::before) */
+.principal::before{
+  content:"";
+  position: absolute;
+  inset: -30%;
+  pointer-events: none;
+  z-index: 0;
+  opacity: .25;
+
+  background:
+    repeating-linear-gradient(
+      28deg,
+      rgba(255,255,255,.055) 0px,
+      rgba(255,255,255,.055) 6px,
+      transparent 6px,
+      transparent 16px
+    ),
+    repeating-linear-gradient(
+      -28deg,
+      rgba(255,255,255,.045) 0px,
+      rgba(255,255,255,.045) 5px,
+      transparent 5px,
+      transparent 15px
+    );
+  transform: rotate(6deg) translate3d(0,0,0);
+  animation: moveTracks 24s linear infinite;
+  filter: drop-shadow(0 0 4px rgba(0,255,255,.05));
+}
+
+@keyframes moveTracks{
+  0%   { transform: rotate(6deg) translate3d(0, 0, 0); }
+  100% { transform: rotate(6deg) translate3d(-160px, -120px, 0); }
+}
+
+/* PONTINHOS LUMINOSOS (camada ::after) */
+.principal::after{
+  content:"";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+
+  background:
+    radial-gradient(2px 2px at 12% 22%, rgba(0,255,255,.45), transparent 60%),
+    radial-gradient(1.5px 1.5px at 25% 70%, rgba(255,255,255,.38), transparent 60%),
+    radial-gradient(2.5px 2.5px at 42% 35%, rgba(0,200,255,.35), transparent 60%),
+    radial-gradient(1.8px 1.8px at 63% 18%, rgba(255,255,255,.30), transparent 60%),
+    radial-gradient(1.8px 1.8px at 78% 62%, rgba(0,255,200,.30), transparent 60%),
+    radial-gradient(2.2px 2.2px at 88% 40%, rgba(255,255,255,.35), transparent 60%),
+    radial-gradient(1.6px 1.6px at 10% 85%, rgba(0,255,255,.35), transparent 60%);
+  animation: floatDots 18s ease-in-out infinite;
+  opacity: .9;
+}
+
+@keyframes floatDots{
+  0%   { transform: translateY(12px) translateX(0);   filter: blur(0); }
+  50%  { transform: translateY(-10px) translateX(-12px); filter: blur(.2px); }
+  100% { transform: translateY(12px) translateX(0);   filter: blur(0); }
+}
+
+/* Deixa mais sutil durante destaque fullscreen */
+.destaque-finalizado::before,
+.destaque-finalizado::after{
+  opacity: .18;
+}
+
+
+
+
+
+
+
+
+/* ====== Animações da imagem do carro ====== */
+.carro-wrap{
+  position: relative;
+  display: inline-block;
+}
+
+.imagem-principal{
+  transform-origin: 50% 100%;
+  will-change: transform, filter;
+}
+
+/* Estado padrão: flutuando e levemente inclinando */
+.car-idle .imagem-principal{
+  animation:
+    carFloat 3.8s ease-in-out infinite,
+    carTilt 7.2s ease-in-out infinite;
+  filter: drop-shadow(0 6px 10px rgba(0,255,255,.15));
+}
+
+/* Quando finalizado: um “arranque” curto e depois brilho pulsando */
+.car-boost .imagem-principal{
+  animation:
+    carBoost 0.6s cubic-bezier(.22,.61,.36,1) 0s 1,
+    carGlow 1.6s ease-in-out 0.6s infinite;
+  filter: drop-shadow(0 10px 18px rgba(0,255,200,.35));
+}
+
+/* Linhas de velocidade atrás do carro */
+.speed-lines{
+  position: absolute;
+  left: -12%;
+  right: -12%;
+  top: 58%;
+  height: 2px;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    linear-gradient(90deg, rgba(0,0,0,0) 0%, rgba(0,255,255,.7) 20%, rgba(0,0,0,0) 40%) 0 0 / 120px 2px repeat-x;
+  opacity: 0;
+  filter: drop-shadow(0 0 6px rgba(0,255,255,.6));
+}
+
+.car-idle .speed-lines{
+  animation: linesIdle 3s ease-in-out infinite;
+  opacity: .35;
+}
+
+.car-boost .speed-lines{
+  animation: linesBoost 1.2s ease-in-out infinite;
+  opacity: .7;
+}
+
+/* Sombra dinâmica sob o carro */
+.carro-wrap::after{
+  content:"";
+  position:absolute;
+  left: 50%;
+  bottom: -4px;
+  transform: translateX(-50%);
+  width: 62%;
+  height: 12px;
+  background: radial-gradient(ellipse at center, rgba(0,0,0,.55) 0%, rgba(0,0,0,0) 70%);
+  filter: blur(2px);
+  opacity: .6;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.car-idle::after{ animation: shadowPulse 3.8s ease-in-out infinite; }
+.car-boost::after{ animation: shadowBoost 1.6s ease-in-out infinite; }
+
+/* ====== Keyframes ====== */
+@keyframes carFloat{
+  0%   { transform: translateY(0); }
+  50%  { transform: translateY(-6px); }
+  100% { transform: translateY(0); }
+}
+
+@keyframes carTilt{
+  0%   { transform: rotate(0deg); }
+  25%  { transform: rotate(-1.2deg); }
+  50%  { transform: rotate(0deg); }
+  75%  { transform: rotate(1.2deg); }
+  100% { transform: rotate(0deg); }
+}
+
+@keyframes carBoost{
+  0%   { transform: translateX(0) scale(1); }
+  30%  { transform: translateX(8px) scale(1.02); }
+  60%  { transform: translateX(-4px) scale(1.01); }
+  100% { transform: translateX(0) scale(1); }
+}
+
+@keyframes carGlow{
+  0%,100% { filter: drop-shadow(0 10px 18px rgba(0,255,200,.35)) saturate(1.05); }
+  50%     { filter: drop-shadow(0 12px 24px rgba(0,255,255,.55)) saturate(1.12); }
+}
+
+@keyframes linesIdle{
+  0%,100% { background-position-x: 0; opacity: .28; }
+  50%     { background-position-x: -60px; opacity: .38; }
+}
+
+@keyframes linesBoost{
+  0%   { background-position-x: 0;   opacity: .6; }
+  50%  { background-position-x: -160px; opacity: .8; }
+  100% { background-position-x: -320px; opacity: .65; }
+}
+
+@keyframes shadowPulse{
+  0%,100% { transform: translateX(-50%) scaleX(1); opacity: .55; }
+  50%     { transform: translateX(-50%) scaleX(1.06); opacity: .7; }
+}
+
+@keyframes shadowBoost{
+  0%,100% { transform: translateX(-50%) scaleX(1); opacity: .65; }
+  50%     { transform: translateX(-50%) scaleX(1.12); opacity: .8; }
 }

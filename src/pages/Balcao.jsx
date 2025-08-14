@@ -224,10 +224,10 @@ export default function Balcao() {
       setConfirmandoId(null);
       buscarCarros();
 
-      // destaque visual 20s + bloqueio total de UI
+      // destaque visual 30s + bloqueio total de UI
       if (data && data.carro) {
         setDestaque(data.carro);
-        setTimeout(() => setDestaque(null), 20000); // 20s
+        setTimeout(() => setDestaque(null), 30000); // ← 30s aqui
       }
     } catch (error) {
       console.error('Erro ao finalizar carro:', error);
@@ -468,13 +468,13 @@ export default function Balcao() {
         </div>
       )}
 
-      {/* destaque do carro finalizado (20s, piscando, bloqueando tudo) */}
+      {/* destaque do carro finalizado (30s, piscando, bloqueando tudo) */}
       {!!destaque && (
         <div
           className="overlay-confirmacao"
           role="dialog"
           aria-modal="true"
-          // sem onClick pra impedir fechar antes dos 20s
+          // sem onClick pra impedir fechar antes dos 30s
           style={{ cursor: 'not-allowed' }}
         >
           <div
@@ -505,8 +505,7 @@ export default function Balcao() {
                   <div><strong>Placa:</strong> {String(destaque.placa || '').toUpperCase()}</div>
                   <div><strong>Cor:</strong> {destaque.cor}</div>
                   <div style={{ whiteSpace: 'normal', overflow: 'visible' }}>
-                    <strong>Serviços:</strong> {servTxt || '-'}
-                  </div>
+                    <strong>Serviços:</strong> {servTxt || '-'}</div>
                   <div><strong>Entrada:</strong> {formatHoraManaus(eMs)}</div>
                   <div><strong>Saída:</strong> {formatHoraManaus(sMs)}</div>
                   <div><strong>Duração:</strong> {dur != null ? fmtHMS(dur) : '-'}</div>
@@ -514,7 +513,7 @@ export default function Balcao() {
               );
             })()}
 
-            {/* sem botão OK; some sozinho em 20s */}
+            {/* sem botão OK; some sozinho em 30s */}
           </div>
         </div>
       )}
