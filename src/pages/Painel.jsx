@@ -29,7 +29,7 @@ export default function Painel() {
     const upper = m.toUpperCase();
     switch (upper) {
       case 'KWID': return 'cuidi';
-      case 'BYD': return 'biu ai díi';
+      case 'BYD': return 'biu ai dii';
       case 'HB20': return 'agá bê vinte';
       case 'ONIX': return 'ônix';
       case 'T-CROSS': return 'tê cross';
@@ -118,20 +118,7 @@ export default function Painel() {
     return () => document.removeEventListener('keydown', onKey, true);
   }, [audioOK]);
 
-  // === TTS: tenta BACKEND (/api/tts) e cai para speechSynthesis ===
-  const tocarTTS = async (texto) => {
-    try {
-      const url = `${API_BASE}/api/tts?text=${encodeURIComponent(texto)}`;
-      const a = new Audio(url);
-      a.volume = 1;
-      await a.play();
-      return true;
-    } catch (e) {
-      console.warn('Falha TTS backend, tentando speechSynthesis...', e);
-      return false;
-    }
-  };
-
+  // === Fala via Web Speech (fallback) ===
   const speak = (texto) => {
     if (!('speechSynthesis' in window)) return false;
     try {
@@ -149,6 +136,34 @@ export default function Painel() {
     }
   };
 
+  // === Player robusto para URL (inclui /api/tts) ===
+  const playUrl = (url, { volume = 1, timeoutMs = 15000 } = {}) =>
+    new Promise((resolve) => {
+      const a = new Audio();
+      a.preload = 'auto';
+      a.crossOrigin = 'anonymous';
+      a.volume = volume;
+      // cache-bust para evitar cache agressivo em TVs
+      const sep = url.includes('?') ? '&' : '?';
+      a.src = `${url}${sep}_=${Date.now()}`;
+      let done = false;
+      const finish = (reason = 'ok') => {
+        if (done) return;
+        done = true;
+        try { a.pause(); } catch {}
+        resolve(reason);
+      };
+      a.addEventListener('canplay', () => {
+        // canplay costuma ser mais confiável que loadedmetadata em TVs
+        a.play().catch(() => finish('blocked'));
+      });
+      a.addEventListener('ended', () => finish('ended'));
+      a.addEventListener('error', () => finish('error'));
+      a.load(); // inicia o carregamento
+      setTimeout(() => finish('timeout'), timeoutMs);
+    });
+
+  // === Player simples para arquivos locais (buzina, etc.) ===
   const playWithFallback = (url, { volume = 1, timeoutMs = 7000 } = {}) =>
     new Promise((resolve) => {
       const a = new Audio(url);
@@ -175,7 +190,7 @@ export default function Painel() {
 
       const tocarFluxo = async () => {
         try {
-          // 1) Toquezinho inicial (busina1) - rápido
+          // 1) toquezinho inicial
           await playWithFallback('/busina.mp3', { timeoutMs: 2000 }).catch(() => {});
 
           // 2) MOTOR + freiada no meio (com fallback)
@@ -192,7 +207,7 @@ export default function Painel() {
                 resolveHalf(null);
               }, half);
             });
-            // Fallback se metadata não vier, toca a freiada após 1200ms
+            // fallback caso metadata não venha
             setTimeout(() => {
               if (!halfTimer) {
                 new Audio('/freiada.mp3').play().catch(() => {});
@@ -204,7 +219,7 @@ export default function Painel() {
           const endPromise = new Promise((resolveEnd) => {
             motor.addEventListener('ended', () => resolveEnd(null));
             motor.addEventListener('error', () => resolveEnd(null));
-            setTimeout(() => resolveEnd(null), 4000); // motor muito curto → fallback
+            setTimeout(() => resolveEnd(null), 4000);
           });
 
           motor.play().catch(() => {});
@@ -212,10 +227,10 @@ export default function Painel() {
           clearTimeout(halfTimer);
           await halfPromise;
 
-          // 3) busina2 final
+          // 3) buzina final
           await playWithFallback('/busina.mp3', { timeoutMs: 2500 }).catch(() => {});
 
-          // 4) FALA (agora tenta backend MP3 primeiro)
+          // 4) FALA via backend TTS
           const ajustarLetra = (letra) => {
             const mapa = { Q: 'quê', W: 'dáblio', Y: 'ípsilon', E: 'é' };
             return mapa[letra.toUpperCase()] || letra.toUpperCase();
@@ -228,13 +243,19 @@ export default function Painel() {
             .join(' ');
 
           const modeloCorrigido = corrigirPronunciaModelo(carro.modelo);
-          const frase = `Carro ${modeloCorrigido}, placa ${placaSeparada}, cor ${carro.cor}, dirija-se ao caixa.`;
+          const frase = `Serviço finalizado, Carro ${modeloCorrigido}, placa ${placaSeparada}, cor ${carro.cor}, Por favor, dirija-se ao caixa.`;
 
-          const okBack = await tocarTTS(frase);
-          if (!okBack) {
-            const okLocal = speak(frase);
-            if (!okLocal) {
-              // Fallback final: toque de atenção
+          // tenta tocar o MP3 gerado pelo backend
+          const reason = await playUrl(`${API_BASE}/api/tts?text=${encodeURIComponent(frase)}`, {
+            volume: 1,
+            timeoutMs: 15000
+          });
+
+          if (reason !== 'ended') {
+            // fallback 1: Web Speech (se existir)
+            const ok = speak(frase);
+            if (!ok) {
+              // fallback 2: toque de atenção
               await playWithFallback('/busina.mp3', { timeoutMs: 2000 }).catch(() => {});
             }
           }
