@@ -32,7 +32,7 @@ html, body {
   align-items: center;
   background-color: #111;
   padding: 0 30px;
-  border-bottom: 2px solid cyan;
+  border-bottom: 2px solid rgb(0, 243, 243);
   height: var(--topoH);     /* altura controlada */
 }
 
