@@ -16,14 +16,19 @@ export default function Painel() {
   const [carroFinalizado, setCarroFinalizado] = useState(null);
   const [emDestaque, setEmDestaque] = useState(false);
 
-  // áudio
-  const [audioOk, setAudioOk] = useState(false);          // liberado?
-  const [pendenteAnuncio, setPendenteAnuncio] = useState(null); // anunciar depois que liberar
+  // áudio / overlay
+  const [audioOk, setAudioOk] = useState(false);
+  const [pendenteAnuncio, setPendenteAnuncio] = useState(null);
 
   const intervaloRef = useRef(null);
   const timeoutDestaqueRef = useRef(null);
   const fallbackEncadeamentoRef = useRef(null);
-  const btnAtivarRef = useRef(null);
+
+  // Refs dos áudios para pré-carregar e reutilizar
+  const busina1Ref = useRef(null);
+  const motorRef   = useRef(null);
+  const freiadaRef = useRef(null);
+  const busina2Ref = useRef(null);
 
   // -------- helpers --------
   const corrigirPronunciaModelo = (modelo) => {
@@ -55,6 +60,22 @@ export default function Painel() {
     }
   };
 
+  // 0) Pré-carrega os áudios
+  useEffect(() => {
+    busina1Ref.current = new Audio('/busina.mp3');
+    motorRef.current   = new Audio('/motor.mp3');
+    freiadaRef.current = new Audio('/freiada.mp3');
+    busina2Ref.current = new Audio('/busina.mp3');
+
+    // pedimos para pré-carregar
+    [busina1Ref, motorRef, freiadaRef, busina2Ref].forEach(r => {
+      try {
+        r.current.preload = 'auto';
+        r.current.load();
+      } catch {}
+    });
+  }, []);
+
   // 1) carga inicial
   useEffect(() => {
     buscarFila();
@@ -75,7 +96,7 @@ export default function Painel() {
     return () => clearInterval(intervaloRef.current);
   }, [fila, carroFinalizado]);
 
-  // ---- TTS via backend ----
+  // ---- TTS via backend (/api/tts?text=...) ----
   const tocarTTS = async (carro) => {
     try {
       const ajustarLetra = (letra) => {
@@ -97,49 +118,66 @@ export default function Painel() {
       audioTTS.volume = 1.0;
       await audioTTS.play();
     } catch (e) {
-      console.warn('Falha ao tocar TTS:', e);
+      console.warn('Falha ao tocar TTS (verifique /api/tts no backend):', e);
     }
   };
 
-  // --- sequência de sons + TTS (reutilizável) ---
+  // --- sequência de sons + TTS ---
   const rodarSequenciaAudio = (carro) => {
-    const busina1 = new Audio('/busina.mp3');
-    const motor   = new Audio('/motor.mp3');
-    const freiada = new Audio('/freiada.mp3');
-    const busina2 = new Audio('/busina.mp3');
+    const busina1 = busina1Ref.current;
+    const motor   = motorRef.current;
+    const freiada = freiadaRef.current;
+    const busina2 = busina2Ref.current;
 
-    const tryPlay = (aud) => aud.play().catch(() => {});
+    const safePlay = (a) => a && a.play().catch(() => {});
 
     try {
+      // garante volumes normais
+      [busina1, motor, freiada, busina2].forEach(a => { if (a) a.volume = 1.0; });
+
+      // reinicia os tempos
+      [busina1, motor, freiada, busina2].forEach(a => { try { a.currentTime = 0; } catch {} });
+
       // toca motor + buzina curta juntos
-      tryPlay(motor);
-      tryPlay(busina1);
+      safePlay(motor);
+      safePlay(busina1);
 
       // agenda freiada no meio do motor (fallback caso duration não venha)
-      motor.onloadedmetadata = () => {
-        const meioMs = Math.max(1000, (motor.duration / 2) * 1000);
-        setTimeout(() => tryPlay(freiada), meioMs);
-      };
-      // fallback se onloadedmetadata não disparar (alguns Tizen)
-      setTimeout(() => tryPlay(freiada), 2500);
+      if (motor) {
+        motor.onloadedmetadata = () => {
+          const meioMs = Math.max(1000, (motor.duration / 2) * 1000);
+          setTimeout(() => safePlay(freiada), meioMs);
+        };
+        // fallback se metadata não vier
+        setTimeout(() => safePlay(freiada), 2500);
+      } else {
+        safePlay(freiada);
+      }
 
       const seguirParaBuzina2 = () => {
-        tryPlay(busina2);
+        safePlay(busina2);
 
         // quando buzina2 terminar, fala TTS
-        busina2.onended = () => {
+        if (busina2) {
+          busina2.onended = () => {
+            tocarTTS(carro);
+            // fallback: se onended falhar, chama TTS mesmo assim
+            fallbackEncadeamentoRef.current = setTimeout(() => tocarTTS(carro), 1000);
+          };
+          // fallback extra: se onended da buzina2 não disparar
+          setTimeout(() => tocarTTS(carro), 3000);
+        } else {
           tocarTTS(carro);
-          // fallback: se onended falhar, chama TTS mesmo assim
-          fallbackEncadeamentoRef.current = setTimeout(() => tocarTTS(carro), 1200);
-        };
-
-        // fallback extra: se onended da buzina2 não disparar
-        setTimeout(() => tocarTTS(carro), 3000);
+        }
       };
 
-      motor.onended = seguirParaBuzina2;
-      // fallback se onended do motor nunca vier
-      setTimeout(seguirParaBuzina2, 4000);
+      if (motor) {
+        motor.onended = seguirParaBuzina2;
+        // fallback se onended do motor nunca vier
+        setTimeout(seguirParaBuzina2, 4000);
+      } else {
+        seguirParaBuzina2();
+      }
     } catch (e) {
       console.warn('Erro no áudio/fala:', e);
     }
@@ -184,7 +222,8 @@ export default function Painel() {
       if (timeoutDestaqueRef.current) clearTimeout(timeoutDestaqueRef.current);
       if (fallbackEncadeamentoRef.current) clearTimeout(fallbackEncadeamentoRef.current);
     };
-  }, [audioOk]); // se audioOk mudar, futuros eventos já estão liberados
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [audioOk]); // quando audioOk mudar, futuros eventos já estão liberados
 
   // 4) quando liberar o áudio e houver anúncio pendente, roda a sequência
   useEffect(() => {
@@ -200,61 +239,63 @@ export default function Painel() {
     if (!carroFinalizado && emDestaque) setEmDestaque(false);
   }, [carroFinalizado, emDestaque]);
 
-  // 6) Overlay "Ativar som"
+  // 6) Overlay “Ativar som”
   useEffect(() => {
-    // foco no botão para aceitar ENTER/OK do controle imediatamente
-    if (!audioOk && btnAtivarRef.current) {
-      try { btnAtivarRef.current.focus(); } catch {}
-    }
-    const onKey = (e) => {
-      if (!audioOk && (e.key === 'Enter' || e.code === 'Enter' || e.keyCode === 13)) {
-        e.preventDefault();
-        handleAtivarSom();
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    if (audioOk) return;
+
+    const activate = () => handleAtivarSom();
+
+    // captura o máximo possível de eventos de controle remoto
+    const handlers = [
+      ['keydown', (e) => {
+        const k = (e.key || '').toLowerCase();
+        if (['enter', 'ok', ' ', 'spacebar'].includes(k) || e.keyCode === 13 || e.code === 'Enter') {
+          e.preventDefault();
+          activate();
+        } else {
+          // Qualquer tecla libera também (algumas TVs mandam códigos estranhos)
+          activate();
+        }
+      }, { capture: true }],
+      ['keypress', () => activate(), { capture: true }],
+      ['keyup',    () => activate(), { capture: true }],
+      ['click',    () => activate(), { capture: true }],
+      ['pointerdown', () => activate(), { capture: true }],
+    ];
+
+    handlers.forEach(([ev, fn, opt]) => window.addEventListener(ev, fn, opt));
+    return () => handlers.forEach(([ev, fn, opt]) => window.removeEventListener(ev, fn, opt));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [audioOk]);
 
   const handleAtivarSom = async () => {
+    if (audioOk) return;
     try {
-      // tenta destravar tocando um áudio curtinho quase mudo
+      // 1) tenta destravar com áudio curtinho quase mudo
       const test = new Audio('/busina.mp3');
       test.volume = 0.01;
-      await test.play();
+      await test.play().catch(() => {});
       test.pause();
       test.currentTime = 0;
 
-      // tenta também acordar o WebAudio (alguns navegadores exigem)
+      // 2) tenta acordar WebAudio
       if (window.AudioContext || window.webkitAudioContext) {
         const Ctx = window.AudioContext || window.webkitAudioContext;
         const ctx = new Ctx();
         if (ctx.state === 'suspended') {
-          await ctx.resume();
+          await ctx.resume().catch(() => {});
         }
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
         gain.gain.value = 0.0001;
         osc.connect(gain).connect(ctx.destination);
         osc.start();
-        osc.stop(ctx.currentTime + 0.01);
+        osc.stop(ctx.currentTime + 0.02);
       }
 
       setAudioOk(true);
     } catch (e) {
-      console.warn('Falha ao liberar áudio, tente novamente:', e);
-      // tenta de novo com outro arquivo
-      try {
-        const test2 = new Audio('/freiada.mp3');
-        test2.volume = 0.01;
-        await test2.play();
-        test2.pause();
-        test2.currentTime = 0;
-        setAudioOk(true);
-      } catch {
-        // se falhar, mantém overlay visível
-      }
+      console.warn('Falha ao liberar áudio; tente apertar OK novamente.', e);
     }
   };
 
@@ -265,6 +306,8 @@ export default function Painel() {
       {/* OVERLAY ATIVAR SOM */}
       {!audioOk && (
         <div
+          onClick={handleAtivarSom}
+          onKeyDown={(e) => { if (e.key === 'Enter') handleAtivarSom(); }}
           style={{
             position: 'fixed',
             inset: 0,
@@ -275,17 +318,11 @@ export default function Painel() {
             justifyContent: 'center',
             zIndex: 20000,
             padding: 24,
-            textAlign: 'center'
+            textAlign: 'center',
+            cursor: 'pointer'
           }}
         >
           <div
-            role="button"
-            tabIndex={0}
-            onClick={handleAtivarSom}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') handleAtivarSom();
-            }}
-            ref={btnAtivarRef}
             style={{
               border: '2px solid cyan',
               borderRadius: 16,
@@ -299,23 +336,22 @@ export default function Painel() {
               ⚠️ Ativar som
             </div>
             <div style={{ fontSize: '1.6rem', marginBottom: 24, color: '#e0ffff' }}>
-              Para liberar o áudio nesta TV, pressione <strong>OK</strong> no controle
-              remoto (ou Enter). Isso é necessário apenas na primeira abertura.
+              Pressione <strong>OK</strong> no controle remoto (ou qualquer tecla).
+              Isso é necessário apenas na primeira abertura.
             </div>
-            <button
+            <div
               style={{
                 fontSize: '1.8rem',
                 fontWeight: 900,
                 background: 'cyan',
                 color: '#000',
-                border: 'none',
                 borderRadius: 12,
                 padding: '14px 22px',
-                cursor: 'pointer'
+                display: 'inline-block'
               }}
             >
               Ativar agora (OK)
-            </button>
+            </div>
           </div>
         </div>
       )}
