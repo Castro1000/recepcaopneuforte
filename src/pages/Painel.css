@@ -1,526 +1,480 @@
-html, body {
+/* ===== Reset & base ===== */
+body, html, #root {
   margin: 0;
   padding: 0;
   height: 100%;
-  display: flex;
-  flex-direction: column;
   font-family: 'Segoe UI', sans-serif;
-  background-color: #0a0a0a;
-  color: white;
-  height: 100vh;            /* garante 1 viewport */
-  overflow: hidden;          /* evita rolagem/corte na TV */
 }
 
-/* Alturas fixas proporcionais para TV 32" */
-:root{
-  --topoH: clamp(70px, 12vh, 140px);
-  --footerH: clamp(70px, 12vh, 140px);
+/* usa 100dvh pra lidar melhor com barra de endereço no navegador */
+.balcao-container {
+  display: flex;
+  height: 100dvh;
+  width: 100vw;
+  overflow: hidden; /* cada lado rola independentemente */
 }
 
-.painel {
+/* ===== Colunas ===== */
+.cadastro-section,
+.fila-section {
   flex: 1;
+  padding: 40px;
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
-  min-height: 100%;
-  padding-bottom: var(--footerH); /* espaço exato do rodapé fixo */
+  gap: 16px;
 }
 
-.topo {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
+/* ---------- Coluna ESQUERDA (Cadastro) ---------- */
+.cadastro-section {
   background-color: #111;
-  padding: 0 30px;
-  border-bottom: 2px solid cyan;
-  height: var(--topoH);     /* altura controlada */
+  color: #fff;
+  align-items: center;
+  justify-content: flex-start;   /* não centraliza verticalmente */
+  overflow-y: auto;              /* rola quando expandir serviços */
+  margin-top: 0;                 /* sem corte */
 }
 
-.titulo {
-  font-size: 3rem;          /* maior para leitura à distância */
+/* título */
+.cadastro-section h1 {
+  margin: 10px 0 10px;
+}
+
+/* form */
+.cadastro-section form {
+  width: 100%;
+  max-width: 400px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-bottom: 24px; /* respiro pro botão não colar no fim */
+}
+
+.cadastro-section input,
+.cadastro-section select {
+  padding: 20px;
+  border: none;
+  border-radius: 5px;
+  font-size: 16px;
+  background: #fff;
+  color: #000;
+}
+
+.cadastro-section button {
+  background-color: #28a745;
+  color: white;
+  padding: 20px;
   font-weight: bold;
-  color: cyan;
-  text-shadow: 0 0 10px cyan;
-  display: flex;
-  align-items: center;
-  gap: 10px;
+  font-size: 20px;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
 }
 
-.previsao {
-  font-size: 1.6rem;
-  color: cyan;
-  text-shadow: 0 0 5px cyan;
+/* mensagens simples (ainda usamos o modal para alertas) */
+.mensagem {
+  margin-top: 15px;
+  color: #00e676;
+  font-weight: bold;
 }
 
-.conteudo {
-  display: flex;
-  flex-direction: row;
-  padding: 10px;
-  gap: 10px;
-  flex-grow: 1;
-  min-height: 0;            /* evita overflow em flex */
-  height: calc(100vh - var(--topoH) - var(--footerH)); /* área útil sem cortar */
-  overflow: hidden;
+/* ---------- Coluna DIREITA (Fila) ---------- */
+.fila-section {
+  background: linear-gradient(to bottom, #0f2027, #203a43, #2c5364);
+  color: #fff;
+  overflow-y: auto; /* rolagem da lista */
 }
 
-/* PRINCIPAL vira flex container para centralizar quando sobrar espaço */
-.principal {
-  flex: 1;
-  background-color: #111;
-  border: 2px solid cyan;
-  border-radius: 12px;
-  padding: 30px;
+.fila-section h2 {
   text-align: center;
-  box-shadow: 0 0 20px cyan;
-  animation: fadeInUp 0.6s ease-in-out;
-  min-width: 0;
+  margin-bottom: 20px;
+}
 
-  /* NOVO: centralização inteligente */
-  display: flex;
+/* ===== LISTA ocupa toda a coluna ===== */
+.carros-grid {
+  display: flex;               /* lista vertical */
   flex-direction: column;
-
-  /* NOVO: habilita camadas decorativas animadas */
-  position: relative;
-  overflow: hidden;
+  gap: 12px;
+  width: 100%;                 /* ocupa toda a área */
+  max-width: none;             /* remove limite de 900px */
+  margin: 0;                   /* sem centralização */
+  padding-bottom: 40px;
 }
 
-.principal h2 {
-  font-size: 50px;
-  color: #00ffff;
-  text-shadow: 0 0 8px cyan;
-  margin-top: 10px;
-  margin-bottom: -10px;
-}
-
-.principal p {
-  font-size: 2.2rem;
-  margin: 0px 10px;
-  color: #eee;
-  text-shadow: 0 0 4px #f5f5f5;
-  margin-top: -5px;
-}
-
-.imagem-principal {
-  width: 45%;
-  max-width: 300px;
-  height: auto;             /* evita altura fixa que estoura */
-  max-height: 38vh;         /* garante que não passe da área útil */
-  object-fit: contain;
-  margin: 0 auto;           /* remove margens negativas que empurravam */
-  filter: drop-shadow(0 0 5px white);
-  margin-bottom: -30px;
-}
-
-/* NOVO: centraliza o bloco quando sobra espaço; se ficar alto, ele “sobe” */
-.conteudo-finalizado {
-  margin-top: auto;
-  margin-bottom: auto;
+/* ===== Card em linha: infos | botão (sem miniatura) ===== */
+.carro-card {
+  width: 100%;
   display: grid;
-  place-items: center;
-  gap: 8px;
+  grid-template-columns: 1fr auto;  /* só infos e ação */
+  align-items: start;               /* << garante crescimento vertical das infos */
+  column-gap: 16px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  position: relative;
+  min-height: 80px;
 }
 
-.lista-lateral {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  min-width: 0;
-  overflow: hidden;
+/* remove completamente a “miniatura” */
+.carro-card::before {
+  content: none !important;
+  display: none !important;
 }
 
-.card-lateral {
-  background-color: #111;
-  border: 2px solid cyan;
-  border-radius: 10px;
-  padding: 5px 0px;
-  display: flex;
-  align-items: center;
-  gap: 15px;
-  box-shadow: 0 0 10px cyan;
+/* textos do card — NUNCA cortar */
+.carro-card p {
+  grid-column: 1;        /* coluna de infos */
+  margin: 2px 0;
+  font-size: 15px;
+  line-height: 1.25;
+  white-space: normal;    /* << quebra linha normalmente */
+  overflow: visible;      /* << nada de esconder */
+  word-break: break-word; /* << quebra palavras grandes */
+  overflow-wrap: anywhere;
 }
 
-.card-lateral h3 {
-  margin: 0;
-  font-size: 1.8rem;        /* melhora legibilidade na TV */
+/* botão “Finalizar” na coluna da direita */
+.carro-card button {
+  grid-column: 2;
+  justify-self: end;
+  align-self: center;
+  background: linear-gradient(to right, #ff416c, #ff4b2b);
   color: white;
+  border: none;
+  padding: 10px 14px;
+  border-radius: 5px;
+  margin: 0;
+  font-weight: bold;
+  font-size: 14px;
+  cursor: pointer;
 }
 
-.card-lateral p {
-  margin: 1px 0;
-  font-size: 1.2rem;
-  color: #ccc;
+.carro-card:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(0,0,0,0.45);
 }
 
-.miniatura {
-  width: 90px;
-  height: auto;
-  filter: drop-shadow(0 0 4px white);
-  flex-shrink: 0;
+/* ===== Serviços NÃO podem ser cortados ===== */
+.servicos-line {
+  /* era: white-space: nowrap; overflow: hidden; text-overflow: ellipsis; */
+  white-space: normal;     /* << permite múltiplas linhas */
+  overflow: visible;       /* << mostra tudo */
+  text-overflow: clip;     /* << sem reticências */
+  display: block;
 }
 
-/* Responsivo (mantido) */
-@media (max-width: 900px) {
-  .conteudo {
-    flex-direction: column;
-    height: auto;
-    overflow: visible;
-  }
-
-  .lista-lateral {
-    flex-direction: row;
-    overflow-x: auto;
-  }
-
-  .card-lateral {
-    min-width: 250px;
-  }
-
-  .principal h2 {
-    font-size: 4rem;
-  }
-
-  .principal p {
-    font-size: 1.5rem;
+/* responsivo opcional */
+@media (max-width: 600px) {
+  .carro-card {
+    grid-template-columns: 1fr auto;
+    padding: 12px;
   }
 }
 
-/* Animação (mantida) */
-@keyframes fadeInUp {
-  0% { opacity: 0; transform: translateY(30px); }
-  100% { opacity: 1; transform: translateY(0); }
-}
-
-/* PARCEIROS fixo, com altura estável */
-.parceiros {
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  width: 100%;
-  border-top: 2px solid cyan;
-  padding: 12px 0;
-  background-color: #0d0d0d;
-  box-shadow: inset 0 0 10px cyan;
-  overflow: hidden;
-  z-index: 100;
-  height: var(--footerH);   /* altura controlada */
-  display: flex;
-  align-items: center;
-}
-
-.parceiros h3 {
-  font-size: 2rem;
-  color: cyan;
-  text-shadow: 0 0 6px cyan;
-  margin: 0 20px 0 30px;
-  white-space: nowrap;
-}
-
-.lista-parceiros {
-  width: 100%;
-  overflow: hidden;
-}
-
-.logos-scroll {
-  display: flex;
-  gap: 60px;
-  animation: marquee 10s linear infinite;
-  width: max-content;
-}
-
-.logo-parceiro {
-  width: 120px;
-  height: auto;
-  filter: drop-shadow(0 0 4px cyan);
-  flex-shrink: 0;
-}
-
-.logo-parceiro:hover { transform: scale(1.1); }
-
-@keyframes marquee {
-  0% { transform: translateX(0%); }
-  100% { transform: translateX(-50%); }
-}
-
-/* Alertas e destaques (mantidos) */
-.alerta-finalizado {
+/* ===== Overlay/Modal padrão ===== */
+.overlay-confirmacao {
   position: fixed;
   top: 0;
-  left: 50%;
-  transform: translateX(-50%);
-  background-color: #00ffcc;
-  color: #000;
-  padding: 15px 30px;
-  font-size: 1.8rem;        /* melhor na TV */
-  font-weight: bold;
-  border-radius: 0 0 10px 10px;
-  box-shadow: 0 0 10px cyan;
-  z-index: 999;
-  animation: slideDown 0.5s ease;
-}
-
-@keyframes slideDown {
-  from { top: -100px; opacity: 0; }
-  to { top: 0; opacity: 1; }
-}
-
-.texto-finalizado {
-  margin-top: 10px;
-  font-size: 2rem;
-  margin-bottom: -25px;
-  font-weight: bold;
-  color: #00ff00;
-  text-shadow: 0 0 10px #00ff00, 0 0 20px #00ff00;
-  animation: pulseVerde 1s infinite alternate;
-}
-
-@keyframes pulseVerde {
-  0% { transform: scale(1); opacity: 1; text-shadow: 0 0 10px #00ff00; }
-  100% { transform: scale(1.05); opacity: 0.85; text-shadow: 0 0 20px #00ff00; }
-}
-
-/* === FULLSCREEN DO CARD FINALIZADO (sobrepõe tudo) === */
-.destaque-finalizado{
-  position: fixed !important;
-  inset: 0 !important;            /* top/right/bottom/left = 0 */
-  width: 100vw !important;
-  height: 100vh !important;
-  margin: 0 !important;
-  border-radius: 0 !important;
-  padding: clamp(24px, 4vh, 56px) !important;
-  background: rgb(10, 10, 10) !important; /* pode trocar por #000 */
-  backdrop-filter: blur(2px);
-  display: flex !important;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.6);
+  display: flex;
   align-items: center;
   justify-content: center;
-  gap: clamp(16px, 3vw, 48px);
-  z-index: 10000 !important;
-  animation: fadeFullscreenIn .25s ease-out;
-  box-sizing: border-box;
+  z-index: 999;
 }
 
-.destaque-finalizado h3{
-  font-size: clamp(3rem, 6vw, 6.5rem) !important;
-  line-height: 1.05;
+.confirmacao-central {
+  background-color: #fff;
+  padding: 30px;
+  border-radius: 12px;
+  box-shadow: 0 0 15px rgba(0, 0, 0, 0.3);
+  text-align: center;
+  max-width: 300px;
 }
 
-.destaque-finalizado p{
-  font-size: clamp(1.8rem, 3vw, 3rem) !important;
-  line-height: 1.2;
-  margin: .4em 0 !important;
+.confirmacao-central p {
+  color: #000;
+  font-size: 17px;
+  font-weight: bold;
+  margin-bottom: 20px;
 }
 
-.destaque-finalizado .miniatura{
-  width: clamp(140px, 18vw, 260px) !important;
-  height: auto !important;
-  flex-shrink: 0;
-  filter: drop-shadow(0 0 6px white);
+.botoes-confirmacao {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
 }
 
-/* Evita que o fundo role enquanto o overlay está visível (opcional) */
-body:has(.destaque-finalizado){
-  overflow: hidden;
+.btn-sim, .btn-nao {
+  padding: 10px 20px;
+  font-weight: bold;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 15px;
 }
 
-/* Entrada suave do overlay */
-@keyframes fadeFullscreenIn{
-  from{ opacity: 0 }
-  to{ opacity: 1 }
+.btn-sim { background-color: #28a745; color: white; }
+.btn-nao { background-color: #dc3545; color: white; }
+
+/* variação visual do modal de alerta */
+.confirmacao-central.modal-sucesso { border-top: 6px solid #28a745; }
+.confirmacao-central.modal-erro    { border-top: 6px solid #dc3545; }
+
+/* ===== Linha do serviço + botão ===== */
+.servico-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
+.servico-row select { flex: 1; }
 
-/* ====== DECORAÇÕES ANIMADAS NO FUNDO DO CARD PRINCIPAL ====== */
+/* Botão + (adicionar serviço) */
+.btn-add-servico {
+  width: 44px;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #10b981, #0ea472);
+  color: #fff;
+  font-size: 26px;
+  font-weight: 800;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 6px 16px rgba(16,185,129,.35);
+  transition: transform .08s ease, box-shadow .2s ease, filter .15s ease;
+}
+.btn-add-servico:hover { transform: translateY(-1px) scale(1.03); box-shadow: 0 12px 24px rgba(16,185,129,.45); }
+.btn-add-servico:active { transform: translateY(0) scale(.98); }
+.btn-add-servico:focus-visible { outline: 2px solid #34d399; outline-offset: 2px; box-shadow: 0 0 0 4px rgba(16,185,129,.25); }
+.btn-add-servico[disabled] { opacity: .55; cursor: not-allowed; filter: grayscale(.2); box-shadow: none; }
 
-/* conteúdo do card sempre acima das camadas decorativas */
-.principal > * { position: relative; z-index: 1; }
+/* Botão × (remover serviço extra) */
+.btn-remove-servico {
+  width: 44px;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #b91c1c, #9f1616);
+  color: #fff;
+  font-size: 24px;
+  font-weight: 800;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 6px 16px rgba(185,28,28,.35);
+  transition: transform .08s ease, box-shadow .2s ease, filter .15s ease;
+}
+.btn-remove-servico:hover { transform: translateY(-1px) scale(1.03); box-shadow: 0 12px 24px rgba(185,28,28,.45); }
+.btn-remove-servico:active { transform: translateY(0) scale(.98); }
+.btn-remove-servico:focus-visible { outline: 2px solid #f87171; outline-offset: 2px; box-shadow: 0 0 0 4px rgba(239,68,68,.25); }
 
-/* RASTROS DE PNEU (camada ::before) */
-.principal::before{
-  content:"";
+/* ===== botão de tempo no card (se você usar) ===== */
+.btn-tempo {
   position: absolute;
-  inset: -30%;
-  pointer-events: none;
-  z-index: 0;
-  opacity: .25;
+  top: 8px;
+  right: 8px;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 8px;
+  background: rgba(0,0,0,0.35);
+  color: #fff;
+  font-size: 18px;
+  cursor: pointer;
+  backdrop-filter: blur(2px);
+}
+.btn-tempo:hover { background: rgba(0,0,0,0.55); }
 
-  background:
-    repeating-linear-gradient(
-      28deg,
-      rgba(255,255,255,.055) 0px,
-      rgba(255,255,255,.055) 6px,
-      transparent 6px,
-      transparent 16px
-    ),
-    repeating-linear-gradient(
-      -28deg,
-      rgba(255,255,255,.045) 0px,
-      rgba(255,255,255,.045) 5px,
-      transparent 5px,
-      transparent 15px
-    );
-  transform: rotate(6deg) translate3d(0,0,0);
-  animation: moveTracks 24s linear infinite;
-  filter: drop-shadow(0 0 4px rgba(0,255,255,.05));
+/* ===== toasts de aviso ===== */
+.toast-container {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  z-index: 9999;
+}
+.toast {
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: #333;
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(0,0,0,.25);
+  max-width: 360px;
+  font-weight: 600;
+}
+.toast-warning {
+  background: linear-gradient(90deg, #ffb703, #fb8500);
+  color: #000;
 }
 
-@keyframes moveTracks{
-  0%   { transform: rotate(6deg) translate3d(0, 0, 0); }
-  100% { transform: rotate(6deg) translate3d(-160px, -120px, 0); }
+/* ===== Destaque quando ACIMA DA MÉDIA (se usar) ===== */
+.carro-card.card-acima {
+  outline: 3px solid #ffb703;
+  box-shadow: 0 0 0 4px rgba(255,183,3,0.25), 0 12px 28px rgba(0,0,0,.45);
+  animation: alertGlow 1.4s ease-in-out infinite;
+}
+@keyframes alertGlow {
+  0%   { box-shadow: 0 0 0 2px rgba(255,183,3,0.2), 0 8px 18px rgba(0,0,0,.35); }
+  50%  { box-shadow: 0 0 0 6px rgba(255,183,3,0.35), 0 16px 36px rgba(0,0,0,.5); }
+  100% { box-shadow: 0 0 0 2px rgba(255,183,3,0.2), 0 8px 18px rgba(0,0,0,.35); }
 }
 
-/* PONTINHOS LUMINOSOS (camada ::after) */
-.principal::after{
-  content:"";
+/* Badge com o nome do serviço atrasado */
+.badge-atraso {
   position: absolute;
-  inset: 0;
-  pointer-events: none;
-  z-index: 0;
-
-  background:
-    radial-gradient(2px 2px at 12% 22%, rgba(0,255,255,.45), transparent 60%),
-    radial-gradient(1.5px 1.5px at 25% 70%, rgba(255,255,255,.38), transparent 60%),
-    radial-gradient(2.5px 2.5px at 42% 35%, rgba(0,200,255,.35), transparent 60%),
-    radial-gradient(1.8px 1.8px at 63% 18%, rgba(255,255,255,.30), transparent 60%),
-    radial-gradient(1.8px 1.8px at 78% 62%, rgba(0,255,200,.30), transparent 60%),
-    radial-gradient(2.2px 2.2px at 88% 40%, rgba(255,255,255,.35), transparent 60%),
-    radial-gradient(1.6px 1.6px at 10% 85%, rgba(0,255,255,.35), transparent 60%);
-  animation: floatDots 18s ease-in-out infinite;
-  opacity: .9;
+  top: 8px;
+  left: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 800;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #ff4d4f, #ff9f1c);
+  color: #000;
+  box-shadow: 0 6px 18px rgba(255,159,28,.35);
+  text-transform: uppercase;
+  letter-spacing: .5px;
 }
 
-@keyframes floatDots{
-  0%   { transform: translateY(12px) translateX(0);   filter: blur(0); }
-  50%  { transform: translateY(-10px) translateX(-12px); filter: blur(.2px); }
-  100% { transform: translateY(12px) translateX(0);   filter: blur(0); }
-}
-
-/* Deixa mais sutil durante destaque fullscreen */
-.destaque-finalizado::before,
-.destaque-finalizado::after{
-  opacity: .18;
-}
-
-
-
-
-
-
-
-
-/* ====== Animações da imagem do carro ====== */
-.carro-wrap{
-  position: relative;
+/* (opcional) tags de serviço */
+.serv-tag {
   display: inline-block;
+  padding: 2px 6px;
+  margin-right: 6px;
+  border-radius: 6px;
+  background: rgba(255,255,255,.15);
+}
+.serv-tag--late {
+  background: linear-gradient(90deg, #ffb703, #fb8500);
+  color: #000;
+  font-weight: 800;
 }
 
-.imagem-principal{
-  transform-origin: 50% 100%;
-  will-change: transform, filter;
+/* ===== Efeito de piscar para o card de destaque (finalizado) ===== */
+@keyframes blinkCard {
+  0%, 100% { box-shadow: 0 0 0px rgba(255,255,255,0.0); transform: scale(1.00); }
+  50%       { box-shadow: 0 0 35px rgba(255,255,255,0.9); transform: scale(1.02); }
+}
+.destaque-card {
+  animation: blinkCard 1s ease-in-out infinite;
 }
 
-/* Estado padrão: flutuando e levemente inclinando */
-.car-idle .imagem-principal{
-  animation:
-    carFloat 3.8s ease-in-out infinite,
-    carTilt 7.2s ease-in-out infinite;
-  filter: drop-shadow(0 6px 10px rgba(0,255,255,.15));
+/* ===== Responsivo (NOVO) ===== */
+
+/* Tablets (até ~1024px): reduz paddings e aumenta área útil */
+@media (max-width: 1024px) {
+  .cadastro-section,
+  .fila-section {
+    padding: 28px;
+    gap: 14px;
+  }
+
+  .cadastro-section form {
+    max-width: 560px;
+  }
+
+  .carro-card p { font-size: 14.5px; }
+  .carro-card button { font-size: 14px; padding: 10px 12px; }
 }
 
-/* Quando finalizado: um “arranque” curto e depois brilho pulsando */
-.car-boost .imagem-principal{
-  animation:
-    carBoost 0.6s cubic-bezier(.22,.61,.36,1) 0s 1,
-    carGlow 1.6s ease-in-out 0.6s infinite;
-  filter: drop-shadow(0 10px 18px rgba(0,255,200,.35));
+/* Mobile grande / médio (≤ 768px): empilha colunas e deixa a página rolável */
+@media (max-width: 768px) {
+  .balcao-container {
+    flex-direction: column;           /* empilha cadastro e fila */
+    height: auto;                     /* deixa a altura crescer conforme o conteúdo */
+    min-height: 100dvh;               /* ainda cobre a viewport */
+    overflow: visible;                /* rolagem da página inteira */
+  }
+
+  .cadastro-section,
+  .fila-section {
+    padding: 18px 16px;
+    gap: 12px;
+  }
+
+  /* form mais confortável no celular */
+  .cadastro-section form {
+    max-width: 100%;
+  }
+  .cadastro-section input,
+  .cadastro-section select {
+    padding: 14px;
+    font-size: 16px;
+  }
+  .cadastro-section button {
+    padding: 14px;
+    font-size: 18px;
+  }
+
+  /* título da lista fixo no topo da coluna (melhora navegação) */
+  .fila-section h2 {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: linear-gradient(to bottom, #0f2027, #203a43, #2c5364);
+    padding: 8px 0 10px;
+    margin: 0 0 12px;
+  }
+
+  .carros-grid { gap: 10px; padding-bottom: 24px; }
+
+  /* card vira coluna: botão embaixo, full-width */
+  .carro-card {
+    grid-template-columns: 1fr;
+    row-gap: 10px;
+    padding: 12px;
+  }
+  .carro-card button {
+    grid-column: 1;
+    justify-self: stretch;
+    width: 100%;
+    padding: 12px;
+    font-size: 16px;
+  }
 }
 
-/* Linhas de velocidade atrás do carro */
-.speed-lines{
-  position: absolute;
-  left: -12%;
-  right: -12%;
-  top: 58%;
-  height: 2px;
-  pointer-events: none;
-  z-index: 0;
-  background:
-    linear-gradient(90deg, rgba(0,0,0,0) 0%, rgba(0,255,255,.7) 20%, rgba(0,0,0,0) 40%) 0 0 / 120px 2px repeat-x;
-  opacity: 0;
-  filter: drop-shadow(0 0 6px rgba(0,255,255,.6));
+/* Mobile pequeno (≤ 420px): micro-ajustes de tipografia e toque */
+@media (max-width: 420px) {
+  .cadastro-section h1 { font-size: 1.25rem; }
+  .cadastro-section input,
+  .cadastro-section select { font-size: 15px; }
+  .cadastro-section button { font-size: 16px; }
+
+  .carro-card p { font-size: 14px; }
+  .btn-add-servico,
+  .btn-remove-servico { width: 40px; height: 40px; }
 }
 
-.car-idle .speed-lines{
-  animation: linesIdle 3s ease-in-out infinite;
-  opacity: .35;
+/* Paisagem baixa (celular deitado com pouca altura) */
+@media (max-height: 520px) and (orientation: landscape) {
+  .cadastro-section,
+  .fila-section { padding: 14px 16px; gap: 10px; }
+  .carro-card { padding: 10px 12px; }
+  .carro-card p { margin: 1px 0; }
 }
 
-.car-boost .speed-lines{
-  animation: linesBoost 1.2s ease-in-out infinite;
-  opacity: .7;
+/* Safe area iOS/Android (recortes/notches) */
+@supports (padding: max(0px)) {
+  .balcao-container {
+    padding-bottom: max(0px, env(safe-area-inset-bottom));
+    padding-top: max(0px, env(safe-area-inset-top));
+  }
 }
 
-/* Sombra dinâmica sob o carro */
-.carro-wrap::after{
-  content:"";
-  position:absolute;
-  left: 50%;
-  bottom: -4px;
-  transform: translateX(-50%);
-  width: 62%;
-  height: 12px;
-  background: radial-gradient(ellipse at center, rgba(0,0,0,.55) 0%, rgba(0,0,0,0) 70%);
-  filter: blur(2px);
-  opacity: .6;
-  pointer-events: none;
-  z-index: 0;
-}
-
-.car-idle::after{ animation: shadowPulse 3.8s ease-in-out infinite; }
-.car-boost::after{ animation: shadowBoost 1.6s ease-in-out infinite; }
-
-/* ====== Keyframes ====== */
-@keyframes carFloat{
-  0%   { transform: translateY(0); }
-  50%  { transform: translateY(-6px); }
-  100% { transform: translateY(0); }
-}
-
-@keyframes carTilt{
-  0%   { transform: rotate(0deg); }
-  25%  { transform: rotate(-1.2deg); }
-  50%  { transform: rotate(0deg); }
-  75%  { transform: rotate(1.2deg); }
-  100% { transform: rotate(0deg); }
-}
-
-@keyframes carBoost{
-  0%   { transform: translateX(0) scale(1); }
-  30%  { transform: translateX(8px) scale(1.02); }
-  60%  { transform: translateX(-4px) scale(1.01); }
-  100% { transform: translateX(0) scale(1); }
-}
-
-@keyframes carGlow{
-  0%,100% { filter: drop-shadow(0 10px 18px rgba(0,255,200,.35)) saturate(1.05); }
-  50%     { filter: drop-shadow(0 12px 24px rgba(0,255,255,.55)) saturate(1.12); }
-}
-
-@keyframes linesIdle{
-  0%,100% { background-position-x: 0; opacity: .28; }
-  50%     { background-position-x: -60px; opacity: .38; }
-}
-
-@keyframes linesBoost{
-  0%   { background-position-x: 0;   opacity: .6; }
-  50%  { background-position-x: -160px; opacity: .8; }
-  100% { background-position-x: -320px; opacity: .65; }
-}
-
-@keyframes shadowPulse{
-  0%,100% { transform: translateX(-50%) scaleX(1); opacity: .55; }
-  50%     { transform: translateX(-50%) scaleX(1.06); opacity: .7; }
-}
-
-@keyframes shadowBoost{
-  0%,100% { transform: translateX(-50%) scaleX(1); opacity: .65; }
-  50%     { transform: translateX(-50%) scaleX(1.12); opacity: .8; }
+/* ===== Responsivo (já existia) — mantém para compatibilidade ===== */
+@media (max-width: 600px) {
+  .carro-card {
+    grid-template-columns: 1fr auto;
+    padding: 12px;
+  }
 }

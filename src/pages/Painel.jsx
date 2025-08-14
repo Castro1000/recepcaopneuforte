@@ -29,7 +29,7 @@ export default function Painel() {
     const upper = m.toUpperCase();
     switch (upper) {
       case 'KWID': return 'cuidi';
-      case 'BYD': return 'biu ai dii';
+      case 'BYD': return 'biu ai di';
       case 'HB20': return 'agá bê vinte';
       case 'ONIX': return 'ônix';
       case 'T-CROSS': return 'tê cross';
