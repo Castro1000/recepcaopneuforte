@@ -4,6 +4,12 @@ const router = express.Router();
 const db = require('./db');
 const jwt = require('jsonwebtoken');
 
+// === (novo) TTS backend ===
+const googleTTS = require('google-tts-api');
+// usa fetch nativo do Node 18+; se não houver, carrega node-fetch dinamicamente
+const doFetch = (...args) =>
+  (global.fetch ? global.fetch(...args) : import('node-fetch').then(({ default: f }) => f(...args)));
+
 // ---------- helpers ----------
 function normalizePerfil(p) {
   return String(p || '')
@@ -163,6 +169,32 @@ router.put('/finalizar-carro/:id', (req, res) => {
       });
     });
   });
+});
+
+// ------------------------- (novo) TTS -------------------------
+// GET /api/tts?text=...
+// Retorna áudio MP3 (voice pt-BR) do texto informado.
+router.get('/tts', async (req, res) => {
+  try {
+    const text = (req.query.text || '').toString().trim();
+    if (!text) return res.status(400).json({ error: 'text required' });
+
+    const url = googleTTS.getAudioUrl(text, {
+      lang: 'pt-BR',
+      slow: false,
+      host: 'https://translate.google.com',
+    });
+
+    const r = await doFetch(url);
+    if (!r.ok) throw new Error(`fetch TTS failed: ${r.status}`);
+
+    res.set('Content-Type', 'audio/mpeg');
+    res.set('Cache-Control', 'no-store');
+    r.body.pipe(res);
+  } catch (e) {
+    console.error('TTS error:', e);
+    res.status(500).json({ error: 'tts_failed' });
+  }
 });
 
 module.exports = router;

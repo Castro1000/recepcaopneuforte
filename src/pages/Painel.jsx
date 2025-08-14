@@ -16,7 +16,7 @@ export default function Painel() {
   const [carroFinalizado, setCarroFinalizado] = useState(null);
   const [emDestaque, setEmDestaque] = useState(false);
 
-  // >>> NOVO: flag de permissão de áudio para TVs
+  // Liberação de áudio para TVs (OK no controle)
   const [audioOK, setAudioOK] = useState(false);
   const unlockBtnRef = useRef(null);
 
@@ -73,36 +73,29 @@ export default function Painel() {
     return () => clearInterval(intervaloRef.current);
   }, [fila, carroFinalizado]);
 
-  // >>> NOVO: função para liberar autoplay/tts via gesto de usuário (OK)
+  // === Liberação de áudio (OK no controle) ===
   const unlockAudio = async () => {
     try {
-      // Toca um áudio curtinho/silencioso para liberar a política
       const a = new Audio('/motor.mp3');
-      a.volume = 0;        // não faz barulho ao liberar
-      await a.play();
+      a.volume = 0;
+      await a.play().catch(() => {});
       a.pause();
       a.currentTime = 0;
 
-      // “Acorda” o speechSynthesis (alguns navegadores precisam de um gesto)
       if ('speechSynthesis' in window) {
         const u = new SpeechSynthesisUtterance(' ');
         u.lang = 'pt-BR';
         window.speechSynthesis.speak(u);
       }
-
       setAudioOK(true);
     } catch (e) {
-      console.warn('Falha ao liberar áudio automaticamente:', e);
-      // Mesmo se der erro, tentamos marcar como OK para não travar.
-      // Se a TV insistir em bloquear, o próximo toque de OK libera.
+      console.warn('Falha ao liberar áudio:', e);
       setAudioOK(true);
     }
   };
 
-  // Foca o botão fullscreen automaticamente (OK do controle dispara "click" nele)
   useEffect(() => {
     if (!audioOK) {
-      // tenta focar repetidamente por 1s (algumas TVs demoram a montar a árvore)
       const t0 = Date.now();
       const tick = () => {
         if (audioOK) return;
@@ -113,7 +106,6 @@ export default function Painel() {
     }
   }, [audioOK]);
 
-  // Atalho por teclado (Enter/Space) — ajuda em navegadores que aceitam keydown
   useEffect(() => {
     const onKey = (e) => {
       const ok = e.key === 'Enter' || e.key === 'NumpadEnter' || e.key === ' ' || e.keyCode === 13 || e.keyCode === 32;
@@ -126,73 +118,140 @@ export default function Painel() {
     return () => document.removeEventListener('keydown', onKey, true);
   }, [audioOK]);
 
+  // === TTS: tenta BACKEND (/api/tts) e cai para speechSynthesis ===
+  const tocarTTS = async (texto) => {
+    try {
+      const url = `${API_BASE}/api/tts?text=${encodeURIComponent(texto)}`;
+      const a = new Audio(url);
+      a.volume = 1;
+      await a.play();
+      return true;
+    } catch (e) {
+      console.warn('Falha TTS backend, tentando speechSynthesis...', e);
+      return false;
+    }
+  };
+
+  const speak = (texto) => {
+    if (!('speechSynthesis' in window)) return false;
+    try {
+      const u = new SpeechSynthesisUtterance(texto);
+      u.lang = 'pt-BR';
+      u.rate = 1.0;
+      const voices = window.speechSynthesis.getVoices?.() || [];
+      const v = voices.find(v => v.lang?.toLowerCase().startsWith('pt')) || voices[0];
+      if (v) u.voice = v;
+      window.speechSynthesis.cancel(); // evita fila acumulada
+      window.speechSynthesis.speak(u);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const playWithFallback = (url, { volume = 1, timeoutMs = 7000 } = {}) =>
+    new Promise((resolve) => {
+      const a = new Audio(url);
+      a.preload = 'auto';
+      a.volume = volume;
+      let done = false;
+      const finish = (reason = 'ok') => {
+        if (done) return;
+        done = true;
+        try { a.pause(); } catch {}
+        resolve(reason);
+      };
+      a.addEventListener('ended', () => finish('ended'));
+      a.addEventListener('error', () => finish('error'));
+      a.play().catch(() => finish('blocked'));
+      setTimeout(() => finish('timeout'), timeoutMs);
+    });
+
   // 3) sockets: finalização + novo carro (REGISTRA UMA VEZ)
   useEffect(() => {
-    const onCarroFinalizado = (carro) => {
+    const onCarroFinalizado = async (carro) => {
       setCarroFinalizado(carro);
       setEmDestaque(true);
 
-      // Se áudio ainda não liberado, mantém o overlay pedindo OK.
-      // Após liberar, os sons abaixo tocam normalmente.
-      const tocarSonsEChamar = () => {
-        const busina1 = new Audio('/busina.mp3');
-        const motor = new Audio('/motor.mp3');
-        const freiada = new Audio('/freiada.mp3');
-        const busina2 = new Audio('/busina.mp3');
-
+      const tocarFluxo = async () => {
         try {
+          // 1) Toquezinho inicial (busina1) - rápido
+          await playWithFallback('/busina.mp3', { timeoutMs: 2000 }).catch(() => {});
+
+          // 2) MOTOR + freiada no meio (com fallback)
+          const motor = new Audio('/motor.mp3');
+          motor.preload = 'auto';
+          motor.volume = 1;
+
+          let halfTimer = null;
+          const halfPromise = new Promise((resolveHalf) => {
+            motor.addEventListener('loadedmetadata', () => {
+              const half = ((motor.duration || 2) / 2) * 1000;
+              halfTimer = setTimeout(() => {
+                new Audio('/freiada.mp3').play().catch(() => {});
+                resolveHalf(null);
+              }, half);
+            });
+            // Fallback se metadata não vier, toca a freiada após 1200ms
+            setTimeout(() => {
+              if (!halfTimer) {
+                new Audio('/freiada.mp3').play().catch(() => {});
+                resolveHalf(null);
+              }
+            }, 1200);
+          });
+
+          const endPromise = new Promise((resolveEnd) => {
+            motor.addEventListener('ended', () => resolveEnd(null));
+            motor.addEventListener('error', () => resolveEnd(null));
+            setTimeout(() => resolveEnd(null), 4000); // motor muito curto → fallback
+          });
+
           motor.play().catch(() => {});
-          busina1.play().catch(() => {});
+          await Promise.race([endPromise]);
+          clearTimeout(halfTimer);
+          await halfPromise;
 
-          motor.onloadedmetadata = () => {
-            const meioMotor = (motor.duration / 2) * 1000;
-            setTimeout(() => freiada.play().catch(() => {}), meioMotor);
+          // 3) busina2 final
+          await playWithFallback('/busina.mp3', { timeoutMs: 2500 }).catch(() => {});
+
+          // 4) FALA (agora tenta backend MP3 primeiro)
+          const ajustarLetra = (letra) => {
+            const mapa = { Q: 'quê', W: 'dáblio', Y: 'ípsilon', E: 'é' };
+            return mapa[letra.toUpperCase()] || letra.toUpperCase();
           };
+          const placaSeparada = (carro.placa || '')
+            .toString()
+            .toUpperCase()
+            .split('')
+            .map(ajustarLetra)
+            .join(' ');
 
-          motor.onended = () => {
-            busina2.play().catch(() => {});
-            busina2.onended = () => {
-              const ajustarLetra = (letra) => {
-                const mapa = { Q: 'quê', W: 'dáblio', Y: 'ípsilon', E: 'é' };
-                return mapa[letra.toUpperCase()] || letra.toUpperCase();
-              };
-              const placaSeparada = (carro.placa || '')
-                .toString()
-                .toUpperCase()
-                .split('')
-                .map(ajustarLetra)
-                .join(' ');
+          const modeloCorrigido = corrigirPronunciaModelo(carro.modelo);
+          const frase = `Carro ${modeloCorrigido}, placa ${placaSeparada}, cor ${carro.cor}, dirija-se ao caixa.`;
 
-              const modeloCorrigido = corrigirPronunciaModelo(carro.modelo);
-              const frase = `Carro ${modeloCorrigido}, placa ${placaSeparada}, cor ${carro.cor}, dirija-se ao caixa.`;
-
-              const falar = (texto) => {
-                if (!('speechSynthesis' in window)) return;
-                const u = new SpeechSynthesisUtterance(texto);
-                u.lang = 'pt-BR';
-                u.volume = 1;
-                u.rate = 1.0;
-                window.speechSynthesis.speak(u);
-              };
-
-              falar(frase);
-              setTimeout(() => falar(frase), 2500);
-            };
-          };
+          const okBack = await tocarTTS(frase);
+          if (!okBack) {
+            const okLocal = speak(frase);
+            if (!okLocal) {
+              // Fallback final: toque de atenção
+              await playWithFallback('/busina.mp3', { timeoutMs: 2000 }).catch(() => {});
+            }
+          }
         } catch (e) {
-          console.warn('Erro no áudio/fala:', e);
+          console.warn('Erro no fluxo de áudio:', e);
         }
       };
 
-      if (audioOK) tocarSonsEChamar();
+      if (audioOK) tocarFluxo();
       else {
-        // assim que liberar, toca para este mesmo chamado (uma única vez)
-        const watcher = setInterval(() => {
+        // espera liberar e roda o fluxo uma única vez
+        const watch = setInterval(() => {
           if (audioOK) {
-            clearInterval(watcher);
-            tocarSonsEChamar();
+            clearInterval(watch);
+            tocarFluxo();
           }
-        }, 200);
+        }, 250);
       }
 
       // remove da fila e ajusta índice
@@ -220,9 +279,9 @@ export default function Painel() {
       socket.off('novoCarroAdicionado', onNovoCarroAdicionado);
       if (timeoutDestaqueRef.current) clearTimeout(timeoutDestaqueRef.current);
     };
-  }, [audioOK]); // observa audioOK para começar a tocar assim que liberar
+  }, [audioOK]); // observa audioOK
 
-  // 4) Guard extra: se por algum motivo carroFinalizado sumir, desliga overlay
+  // 4) Guard extra
   useEffect(() => {
     if (!carroFinalizado && emDestaque) setEmDestaque(false);
   }, [carroFinalizado, emDestaque]);
@@ -242,22 +301,10 @@ export default function Painel() {
             if (ok) { e.preventDefault(); unlockAudio(); }
           }}
           style={{
-            position: 'fixed',
-            inset: 0,
-            zIndex: 99999,
-            background: 'rgba(0,0,0,0.85)',
-            color: '#0ff',
-            fontSize: '3rem',
-            fontWeight: 800,
-            textShadow: '0 0 10px #0ff',
-            border: 'none',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            flexDirection: 'column',
-            gap: 8,
-            padding: 20,
-            cursor: 'pointer'
+            position: 'fixed', inset: 0, zIndex: 99999, background: 'rgba(0,0,0,0.85)',
+            color: '#0ff', fontSize: '3rem', fontWeight: 800, textShadow: '0 0 10px #0ff',
+            border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            flexDirection: 'column', gap: 8, padding: 20, cursor: 'pointer'
           }}
         >
           <div>Pressione <u>OK</u> no controle</div>
@@ -268,26 +315,10 @@ export default function Painel() {
       )}
 
       <div className="topo">
-        {/* ESQUERDA: logo */}
         <div className="titulo" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <img
-            src="/img/logo_pneuforte.png"
-            alt="Pneu Forte"
-            style={{ height: 65, objectFit: 'contain' }}
-          />
+          <img src="/img/logo_pneuforte.png" alt="Pneu Forte" style={{ height: 65, objectFit: 'contain' }} />
         </div>
-
-        {/* DIREITA: título */}
-        <div
-          className="previsao"
-          style={{
-            fontSize: '3rem',
-            fontWeight: 800,
-            letterSpacing: '2px',
-            textTransform: 'uppercase',
-            textShadow: '0 0 10px cyan'
-          }}
-        >
+        <div className="previsao" style={{ fontSize: '3rem', fontWeight: 800, letterSpacing: '2px', textTransform: 'uppercase', textShadow: '0 0 10px cyan' }}>
           LISTA DE ESPERA
         </div>
       </div>
@@ -302,9 +333,7 @@ export default function Painel() {
                 className="imagem-principal"
               />
               <div className="info-carro">
-                {carroFinalizado && (
-                  <div className="texto-finalizado">🚗 CARRO FINALIZADO ✅</div>
-                )}
+                {carroFinalizado && <div className="texto-finalizado">🚗 CARRO FINALIZADO ✅</div>}
                 <h2>{carroDestaque.modelo?.toUpperCase()}</h2>
                 <p>🔖 Placa: {carroDestaque.placa}</p>
                 <p>🎨 Cor: {carroDestaque.cor}</p>
@@ -313,11 +342,7 @@ export default function Painel() {
             </div>
           ) : (
             <div className="conteudo-finalizado">
-              <img
-                src="/img/carro_pneu_forte.png"
-                alt="Carro"
-                className="imagem-principal"
-              />
+              <img src="/img/carro_pneu_forte.png" alt="Carro" className="imagem-principal" />
               <div className="info-carro">
                 <h2>Sem carros na fila</h2>
               </div>
