@@ -243,7 +243,7 @@ export default function Painel() {
             .join(' ');
 
           const modeloCorrigido = corrigirPronunciaModelo(carro.modelo);
-          const frase = `Serviço finalizado, Carro ${modeloCorrigido}, placa ${placaSeparada}, cor ${carro.cor}, Por favor, dirija-se ao caixa.`;
+          const frase = `Serviço finalizado, Carro ${modeloCorrigido}, placa ${placaSeparada}, cor ${carro.cor}, Carro ${modeloCorrigido}, placa ${placaSeparada}, cor ${carro.cor}, dirija-se ao caixa.   Obrigado pela preferência!`;
 
           // tenta tocar o MP3 gerado pelo backend
           const reason = await playUrl(`${API_BASE}/api/tts?text=${encodeURIComponent(frase)}`, {
