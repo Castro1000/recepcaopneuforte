@@ -80,7 +80,7 @@ body, html, #root {
 .fila-section {
   background: linear-gradient(to bottom, #0f2027, #203a43, #2c5364);
   color: #fff;
-  overflow-y: auto; /* mobile: deixo a página rolar inteira */
+  overflow-y: auto;
 }
 
 .fila-section h2 {
@@ -220,10 +220,10 @@ body, html, #root {
   gap: 8px;
 }
 
-/* ⚠️ evita estouro horizontal: o select pode encolher dentro do flex */
+/* evita estouro no mobile */
 .servico-row select {
   flex: 1 1 auto;
-  min-width: 0;     /* <- ESSENCIAL no mobile */
+  min-width: 0; /* ESSENCIAL */
 }
 
 /* botão + nunca “expande” */
@@ -379,17 +379,25 @@ body, html, #root {
 
 /* Mobile (≤ 768px): empilha colunas e libera rolagem geral da página */
 @media (max-width: 768px) {
+  /* Destrava a RAIZ para a página poder ter altura maior que a viewport */
+  html, body, #root {
+    height: auto !important;
+    min-height: 100dvh;
+    overflow-y: auto !important;
+    touch-action: pan-y;                 /* melhora gesto de rolagem */
+    -webkit-overflow-scrolling: touch;   /* iOS */
+  }
+
   .balcao-container {
     flex-direction: column;
-    height: auto;           /* <- libera crescimento */
+    height: auto;            /* <- libera crescimento */
     min-height: 100dvh;
-    overflow: visible;      /* <- a página inteira rola */
+    overflow: visible;       /* <- a página inteira rola */
   }
 
   .cadastro-section,
   .fila-section { padding: 18px 16px; gap: 12px; }
 
-  /* form confortável */
   .cadastro-section form { max-width: 100%; }
   .cadastro-section input,
   .cadastro-section select { padding: 14px; font-size: 16px; }
@@ -404,10 +412,12 @@ body, html, #root {
   .btn-add-servico { width: 48px; height: 48px; }
   .servico-row select { min-width: 0; } /* reforço */
 
-  /* título da lista “gruda” no topo quando rola */
+  /* lista usa rolagem global */
   .fila-section {
-    overflow: visible;            /* <- usa rolagem global */
+    overflow: visible;
+    -webkit-overflow-scrolling: touch;
   }
+
   .fila-section h2 {
     position: sticky;
     top: 0;
