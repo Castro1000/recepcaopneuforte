@@ -4,9 +4,8 @@ const router = express.Router();
 const db = require('./db');
 const jwt = require('jsonwebtoken');
 
-// === (novo) TTS backend ===
+// === (já existente) TTS backend ===
 const googleTTS = require('google-tts-api');
-// usa fetch nativo do Node 18+; se não houver, carrega node-fetch dinamicamente
 const doFetch = (...args) =>
   (global.fetch ? global.fetch(...args) : import('node-fetch').then(({ default: f }) => f(...args)));
 
@@ -59,11 +58,10 @@ router.post('/login', (req, res) => {
   });
 });
 
-// ------ CADASTRAR CARRO (servico2, servico3, num_movimento) ------
+// ------ CADASTRAR CARRO ------
 router.post('/cadastrar-carro', (req, res) => {
   const { placa, modelo, cor, servico, servico2, servico3, num_movimento } = req.body;
 
-  // validações mínimas também no backend
   if (!placa || !modelo || !cor || !servico || !num_movimento) {
     return res.status(400).json({ error: 'Campos obrigatórios faltando' });
   }
@@ -100,7 +98,6 @@ router.post('/cadastrar-carro', (req, res) => {
 
 // ------------------------- LISTAR FILA -------------------------
 router.get('/fila-servico', (req, res) => {
-  // IMPORTANTE: converter Manaus -> UTC antes de UNIX_TIMESTAMP
   const sql = `
     SELECT
       id,
@@ -171,9 +168,7 @@ router.put('/finalizar-carro/:id', (req, res) => {
   });
 });
 
-// ------------------------- (novo) TTS -------------------------
-// GET /api/tts?text=...
-// Retorna áudio MP3 (voice pt-BR) do texto informado.
+// ------------------------- (existente) TTS -------------------------
 router.get('/tts', async (req, res) => {
   try {
     const text = (req.query.text || '').toString().trim();
@@ -195,6 +190,101 @@ router.get('/tts', async (req, res) => {
     console.error('TTS error:', e);
     res.status(500).json({ error: 'tts_failed' });
   }
+});
+
+/* =================================================================
+   ========== NOVOS ENDPOINTS PARA A PÁGINA ADMIN ==========
+   ================================================================= */
+
+// GET /api/relatorio-carros?from=YYYY-MM-DD&to=YYYY-MM-DD&placa=ABC1234&status=todos|abertos|fechados
+router.get('/relatorio-carros', (req, res) => {
+  let { from, to, placa, status } = req.query;
+
+  // defaults: hoje
+  const hoje = new Date();
+  const y = hoje.getFullYear();
+  const m = String(hoje.getMonth() + 1).padStart(2, '0');
+  const d = String(hoje.getDate()).padStart(2, '0');
+  const hojeStr = `${y}-${m}-${d}`;
+
+  from = (from || hojeStr).slice(0, 10);
+  to   = (to   || from).slice(0, 10);
+  placa = (placa || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  status = (status || 'todos').toLowerCase();
+
+  const wh = [];
+  const params = [];
+
+  // intervalo: [from 00:00:00, to + 1dia 00:00:00)
+  wh.push(`data_entrada >= ? AND data_entrada < DATE_ADD(?, INTERVAL 1 DAY)`);
+  params.push(`${from} 00:00:00`, `${to} 00:00:00`);
+
+  if (placa) { wh.push(`placa LIKE ?`); params.push(`%${placa}%`); }
+  if (status === 'abertos')   wh.push(`data_saida IS NULL`);
+  if (status === 'fechados')  wh.push(`data_saida IS NOT NULL`);
+
+  const sql = `
+    SELECT
+      id, placa, modelo, cor, servico, servico2, servico3, num_movimento,
+      data_entrada, data_saida,
+      UNIX_TIMESTAMP(CONVERT_TZ(data_entrada, '-04:00', '+00:00')) * 1000 AS data_entrada_ms,
+      CASE WHEN data_saida IS NULL THEN NULL
+           ELSE UNIX_TIMESTAMP(CONVERT_TZ(data_saida, '-04:00', '+00:00')) * 1000
+      END AS data_saida_ms
+    FROM carros
+    WHERE ${wh.join(' AND ')}
+    ORDER BY data_entrada DESC
+  `;
+
+  db.query(sql, params, (err, rows) => {
+    if (err) {
+      console.error('relatorio-carros error:', err);
+      return res.status(500).json({ error: 'db_error' });
+    }
+    res.json(rows || []);
+  });
+});
+
+// GET /api/estatisticas-servicos?from=YYYY-MM-DD&to=YYYY-MM-DD
+// Soma a duração (em segundos) por serviço (servico/servico2/servico3) apenas dos finalizados.
+router.get('/estatisticas-servicos', (req, res) => {
+  let { from, to } = req.query;
+
+  const hoje = new Date();
+  const y = hoje.getFullYear();
+  const m = String(hoje.getMonth() + 1).padStart(2, '0');
+  const d = String(hoje.getDate()).padStart(2, '0');
+  const hojeStr = `${y}-${m}-${d}`;
+
+  from = (from || hojeStr).slice(0, 10);
+  to   = (to   || from).slice(0, 10);
+
+  const rangeWhere = `data_entrada >= ? AND data_entrada < DATE_ADD(?, INTERVAL 1 DAY) AND data_saida IS NOT NULL`;
+  const params = [`${from} 00:00:00`, `${to} 00:00:00`, `${from} 00:00:00`, `${to} 00:00:00`, `${from} 00:00:00`, `${to} 00:00:00`];
+
+  const sql = `
+    SELECT nome, SUM(dur) AS total_seg, COUNT(*) AS itens
+    FROM (
+      SELECT servico  AS nome, TIMESTAMPDIFF(SECOND, data_entrada, data_saida) AS dur
+      FROM carros WHERE servico  IS NOT NULL AND ${rangeWhere}
+      UNION ALL
+      SELECT servico2 AS nome, TIMESTAMPDIFF(SECOND, data_entrada, data_saida) AS dur
+      FROM carros WHERE servico2 IS NOT NULL AND ${rangeWhere}
+      UNION ALL
+      SELECT servico3 AS nome, TIMESTAMPDIFF(SECOND, data_entrada, data_saida) AS dur
+      FROM carros WHERE servico3 IS NOT NULL AND ${rangeWhere}
+    ) x
+    GROUP BY nome
+    ORDER BY total_seg DESC
+  `;
+
+  db.query(sql, params, (err, rows) => {
+    if (err) {
+      console.error('estatisticas-servicos error:', err);
+      return res.status(500).json({ error: 'db_error' });
+    }
+    res.json(rows || []);
+  });
 });
 
 module.exports = router;
