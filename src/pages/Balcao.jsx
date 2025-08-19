@@ -2,8 +2,8 @@ import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import './Balcao.css';
 
-const API_BASE = 'http://localhost:3001';
-//const API_BASE = 'https://recepcaopneuforte.onrender.com';
+//const API_BASE = 'http://localhost:3001';
+const API_BASE = 'https://recepcaopneuforte.onrender.com';
 
 /** Interpreta data do MySQL como Manaus quando vier "YYYY-MM-DD HH:mm:ss".
  *  Se vier ISO/Z ou Date, também funciona. Retorna timestamp (ms).
