@@ -14,7 +14,7 @@ function parseDbDateManaus(input) {
 
   const raw = String(input).trim();
 
-  // 1) ISO (com Z/offset)
+  // ) ISO (com Z/offset)
   let t = Date.parse(raw);
   if (!Number.isNaN(t)) return t;
 

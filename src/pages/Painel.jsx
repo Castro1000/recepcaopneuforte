@@ -16,7 +16,7 @@ export default function Painel() {
   const [carroFinalizado, setCarroFinalizado] = useState(null);
   const [emDestaque, setEmDestaque] = useState(false);
 
-  // Liberação de áudio para TVs (OK no controle)
+  //Liberação de áudio para TVs (OK no controle)
   const [audioOK, setAudioOK] = useState(false);
   const unlockBtnRef = useRef(null);
 

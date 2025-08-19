@@ -245,7 +245,6 @@ router.get('/relatorio-carros', (req, res) => {
   });
 });
 
-// GET /api/estatisticas-servicos?from=YYYY-MM-DD&to=YYYY-MM-DD
 // Soma a duração (em segundos) por serviço (servico/servico2/servico3) apenas dos finalizados.
 router.get('/estatisticas-servicos', (req, res) => {
   let { from, to } = req.query;
