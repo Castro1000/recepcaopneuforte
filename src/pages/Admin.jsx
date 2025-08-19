@@ -2,10 +2,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
 import './Admin.css';
 
-// const API_BASE = 'http://localhost:3001';
 const API_BASE = 'https://recepcaopneuforte.onrender.com';
+//const API_BASE = 'http://localhost:3001';
 
 // ---------- utils ----------
 function parseDbDateManaus(input) {
@@ -61,7 +62,6 @@ export default function Admin() {
   const [placa, setPlaca] = useState('');
   const [from, setFrom] = useState(() => toYYYYMMDD(new Date()));
   const [to, setTo] = useState(() => toYYYYMMDD(new Date()));
-
   const [statusSel, setStatusSel] = useState('TODOS'); // TODOS | EM ANDAMENTO | FINALIZADO
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(null);
@@ -72,6 +72,9 @@ export default function Admin() {
   const [errText, setErrText] = useState('');
   const [page, setPage] = useState(1);
   const pageSize = 15;
+
+  // >>> Toggle do gráfico (escondido por padrão)
+  const [showChart, setShowChart] = useState(false);
 
   // ---- fetch helpers
   async function fetchJson(url) {
@@ -115,7 +118,7 @@ export default function Admin() {
     try {
       const rel = await fetchRelatorio(params);
       setItems(filtraPorStatus(rel, statusSel));
-    } catch (e) {
+    } catch {
       try {
         const fila = await fetchFilaAtual();
         if (statusSel === 'FINALIZADO') {
@@ -143,6 +146,15 @@ export default function Admin() {
   const buscarPeriodo = () => runBusca('periodo');
   const buscarPorPlaca = () => runBusca('placa');
 
+  // >>> NOVO: botão "Hoje" seta data de hoje e já busca
+  function handleHoje() {
+    const d = toYYYYMMDD(new Date());
+    setFrom(d);
+    setTo(d);
+    setTab('hoje');
+    buscar({ from: d, to: d, status: 'todos' });
+  }
+
   useEffect(() => { buscarHoje(); /* eslint-disable-line */ }, []);
   useEffect(() => {
     const onDoc = (e) => { if (menuRef.current && !menuRef.current.contains(e.target)) setMenuOpen(false); };
@@ -157,37 +169,46 @@ export default function Admin() {
     const finalizadosArr = items.filter(it => it.data_saida || it.data_saida_ms);
     const andamento = total - finalizadosArr.length;
 
-    let maxId = null, maxDur = -1;
+    let maxId = null, maxDur = -1, maxItem = null;
     let minId = null, minDur = Number.POSITIVE_INFINITY;
-
-    const longestByService = Object.create(null);
-    const primaryService = (it) => it.servico || it.servico2 || it.servico3 || 'OUTRO';
 
     for (const it of finalizadosArr) {
       const e = it.data_entrada_ms ?? parseDbDateManaus(it.data_entrada);
       const s = it.data_saida_ms ?? parseDbDateManaus(it.data_saida);
       if (!Number.isFinite(e) || !Number.isFinite(s)) continue;
       const dur = Math.max(0, Math.floor((s - e) / 1000));
-
-      if (dur > maxDur) { maxDur = dur; maxId = it.id; }
+      if (dur > maxDur) { maxDur = dur; maxId = it.id; maxItem = it; }
       if (dur < minDur) { minDur = dur; minId = it.id; }
-
-      const svc = primaryService(it);
-      const rec = longestByService[svc];
-      if (!rec || dur > rec.dur) {
-        longestByService[svc] = { dur, modelo: it.modelo, placa: it.placa };
-      }
     }
 
-    let topSvc = null;
-    for (const [svc, data] of Object.entries(longestByService)) {
-      if (!topSvc || data.dur > topSvc.carro.duracao) {
-        topSvc = { nome: svc, carro: { modelo: data.modelo, placa: data.placa, duracao: data.dur } };
-      }
+    // “Serviço mais demorado” = texto completo dos serviços do carro mais demorado
+    let svcMais = null;
+    if (maxItem) {
+      const servicosCheios = [maxItem.servico, maxItem.servico2, maxItem.servico3].filter(Boolean).join(' | ');
+      svcMais = { nome: servicosCheios || '—', carro: { modelo: maxItem.modelo, placa: maxItem.placa }, duracao: maxDur };
     }
 
-    return { kpis: { total, andamento, finalizados: finalizadosArr.length, servicoMais: topSvc || null }, maxId, minId };
+    return { kpis: { total, andamento, finalizados: finalizadosArr.length, servicoMais: svcMais }, maxId, minId };
   }, [items]);
+
+  // ---- Distribuição de serviços (pizza)
+  const servicosCount = useMemo(() => {
+    const map = Object.create(null);
+    for (const it of items) {
+      const servs = [it.servico, it.servico2, it.servico3].map(s => (s || '').trim()).filter(Boolean);
+      for (const s of servs) map[s] = (map[s] || 0) + 1;
+    }
+    return map;
+  }, [items]);
+
+  const chartData = useMemo(() => {
+    const entries = Object.entries(servicosCount);
+    const total = entries.reduce((acc, [, v]) => acc + v, 0) || 1;
+    entries.sort((a, b) => b[1] - a[1]);
+    return entries.map(([name, value]) => ({ name, value, pct: (value / total) * 100 }));
+  }, [servicosCount]);
+
+  const COLORS = ['#00FFFF','#19C37D','#FFB703','#3B82F6','#A78BFA','#F472B6','#F59E0B','#22D3EE','#10B981','#EF4444'];
 
   const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
   const pageItems = useMemo(() => {
@@ -195,37 +216,6 @@ export default function Admin() {
     return items.slice(start, start + pageSize);
   }, [items, page]);
 
-  function exportCSV() {
-    if (!items.length) return;
-    const header = [
-      'Data Entrada','Hora Entrada','Data Saída','Hora Saída','Duração (s)',
-      'Placa','Modelo','Cor','Serviço','Serviço2','Serviço3','Nº Movimento','Status'
-    ];
-    const rows = items.map(it => {
-      const eMs = it.data_entrada_ms ?? parseDbDateManaus(it.data_entrada);
-      const sMs = it.data_saida_ms ?? (it.data_saida ? parseDbDateManaus(it.data_saida) : NaN);
-      const dur = (Number.isFinite(eMs) && Number.isFinite(sMs)) ? Math.floor((sMs - eMs)/1000) : '';
-      const dataE = Number.isFinite(eMs) ? formatDataManaus(eMs) : '';
-      const horaE = Number.isFinite(eMs) ? formatHoraManaus(eMs) : '';
-      const dataS = Number.isFinite(sMs) ? formatDataManaus(sMs) : '';
-      const horaS = Number.isFinite(sMs) ? formatHoraManaus(sMs) : '';
-      return [
-        dataE, horaE, dataS, horaS, dur,
-        it.placa||'', it.modelo||'', it.cor||'',
-        it.servico||'', it.servico2||'', it.servico3||'',
-        it.num_movimento||'', it.data_saida||it.data_saida_ms ? 'FINALIZADO' : 'EM ANDAMENTO'
-      ];
-    });
-    const csv = [header, ...rows].map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(';')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `relatorio_${from}_a_${to}.csv`;
-    a.click();
-    URL.revokeObjectURL(a.href);
-  }
-
-  // ---- PDF
   function exportPDF() {
     if (!items.length) return;
 
@@ -236,20 +226,15 @@ export default function Admin() {
     const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
     const pageWidth = doc.internal.pageSize.getWidth();
 
-    // título
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(16);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(16);
     doc.text('Administração — Recepção', 40, 40);
 
-    // filtros linha 1
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
     const gerado = new Date().toLocaleString('pt-BR');
     doc.text(`Período: ${from} a ${to}   |   Status: ${statusLabel}   |   Gerado em: ${gerado}`, 40, 60);
 
-    // KPIs (em uma mini-tabela)
     const svcMais = kpis.servicoMais
-      ? `${kpis.servicoMais.nome} — ${fmtHMS(kpis.servicoMais.carro.duracao)}  (${(kpis.servicoMais.carro.modelo || '').toUpperCase()} · ${kpis.servicoMais.carro.placa})`
+      ? `${kpis.servicoMais.nome} — ${fmtHMS(kpis.servicoMais.duracao)}  (${(kpis.servicoMais.carro.modelo || '').toUpperCase()} · ${kpis.servicoMais.carro.placa})`
       : '—';
 
     autoTable(doc, {
@@ -258,18 +243,12 @@ export default function Admin() {
       styles: { fontSize: 10, cellPadding: 6 },
       head: [[ 'Total', 'Em andamento', 'Finalizados', 'Serviço mais demorado' ]],
       body: [[ String(kpis.total), String(kpis.andamento), String(kpis.finalizados), svcMais ]],
-      columnStyles: {
-        0: { cellWidth: 80 },
-        1: { cellWidth: 110 },
-        2: { cellWidth: 90 },
-        3: { cellWidth: pageWidth - 40 - 40 - (80+110+90) } // preenche o resto
-      },
+      columnStyles: { 0:{cellWidth:80}, 1:{cellWidth:110}, 2:{cellWidth:90}, 3:{cellWidth: pageWidth-40-40-(80+110+90)} },
       margin: { left: 40, right: 40 },
       headStyles: { fillColor: [15, 60, 70] }
     });
 
-    // tabela principal
-    const startY = (doc.lastAutoTable && doc.lastAutoTable.finalY) ? doc.lastAutoTable.finalY + 12 : 120;
+    const startY = (doc.lastAutoTable?.finalY) ? doc.lastAutoTable.finalY + 12 : 120;
 
     const columns = [
       { header: 'Entrada', dataKey: 'entrada' },
@@ -310,15 +289,8 @@ export default function Admin() {
       body: rows.map(r => columns.map(c => r[c.dataKey])),
       styles: { fontSize: 9, cellPadding: 4, overflow: 'linebreak' },
       columnStyles: {
-        0: { cellWidth: 100 },
-        1: { cellWidth: 100 },
-        2: { cellWidth: 55 },
-        3: { cellWidth: 70 },
-        4: { cellWidth: 110 },
-        5: { cellWidth: 70 },
-        6: { cellWidth: 260 }, // Serviços
-        7: { cellWidth: 60 },
-        8: { cellWidth: 110 },
+        0:{cellWidth:100}, 1:{cellWidth:100}, 2:{cellWidth:55}, 3:{cellWidth:70},
+        4:{cellWidth:110}, 5:{cellWidth:70}, 6:{cellWidth:260}, 7:{cellWidth:60}, 8:{cellWidth:110}
       },
       margin: { left: 40, right: 40 },
       headStyles: { fillColor: [9, 35, 45] }
@@ -331,13 +303,24 @@ export default function Admin() {
     statusSel === 'FINALIZADO' ? 'Finalizado' :
     statusSel === 'EM ANDAMENTO' ? 'Em andamento' : 'Todos';
 
+  const DonutTooltip = ({ active, payload }) => {
+    if (!active || !payload?.length) return null;
+    const d = payload[0].payload;
+    return (
+      <div className="chart-tooltip">
+        <div className="tt-title">{d.name}</div>
+        <div className="tt-line"><span>Quantidade:</span> {d.value}</div>
+        <div className="tt-line"><span>Percentual:</span> {d.pct.toFixed(1)}%</div>
+      </div>
+    );
+  };
+
   return (
     <div className="admin">
       <header className="admin__header">
         <h1>📊 Administração — Recepção</h1>
 
         <div className="admin__header-right">
-          {/* menu status */}
           <div className="status-filter" ref={menuRef}>
             <button className="btn btn-ghost status-btn" onClick={() => setMenuOpen(o => !o)} aria-haspopup="menu" aria-expanded={menuOpen}>
               {statusLabel} <span className="caret">▾</span>
@@ -352,7 +335,8 @@ export default function Admin() {
           </div>
 
           <div className="admin__tabs">
-            <button className={tab==='hoje'?'is-active':''} onClick={() => { setTab('hoje'); buscarHoje(); }}>Hoje</button>
+            {/* Troca: usa handleHoje */}
+            <button className={tab==='hoje'?'is-active':''} onClick={handleHoje}>Hoje</button>
             <button className={tab==='periodo'?'is-active':''} onClick={() => setTab('periodo')}>Período</button>
             <button className={tab==='placa'?'is-active':''} onClick={() => setTab('placa')}>Placa</button>
           </div>
@@ -416,17 +400,15 @@ export default function Admin() {
           {errText && <div className="error">{errText}</div>}
         </section>
 
-        {/* KPIs */}
+        {/* KPIs + botão do gráfico */}
         <section className="admin__kpis">
-          <div className="kpi"><div className="kpi__title">Total</div><div className="kpi__value">{kpis.total}</div></div>
+          <div className="kpi"><div className="kpi__title">Total de carros</div><div className="kpi__value">{kpis.total}</div></div>
           <div className="kpi"><div className="kpi__title">Em andamento</div><div className="kpi__value">{kpis.andamento}</div></div>
           <div className="kpi"><div className="kpi__title">Finalizados</div><div className="kpi__value">{kpis.finalizados}</div></div>
           <div className="kpi kpi--wide">
             <div className="kpi__title">Serviço mais demorado</div>
-            <div className="kpi__value">
-              {kpis.servicoMais
-                ? `${kpis.servicoMais.nome} — ${fmtHMS(kpis.servicoMais.carro.duracao)}`
-                : '—'}
+            <div className="kpi__value kpi__value--wrap">
+              {kpis.servicoMais ? `${kpis.servicoMais.nome} — ${fmtHMS(kpis.servicoMais.duracao)}` : '—'}
             </div>
             {kpis.servicoMais?.carro && (
               <div className="kpi__sub">
@@ -434,13 +416,68 @@ export default function Admin() {
               </div>
             )}
           </div>
+
           <div className="kpi tools">
-            <button className="btn btn-secondary" onClick={exportCSV} disabled={!items.length}>Baixar CSV</button>
-            <button className="btn btn-secondary" onClick={exportPDF} disabled={!items.length} style={{ marginLeft: 8 }}>Baixar PDF</button>
+            {/*<button className="btn btn-secondary" onClick={exportCSV} disabled={!items.length}>Baixar CSV</button>*/}
+            <button className="btn btn-secondary" onClick={exportPDF} disabled={!items.length}>Baixar PDF</button>
+            <button className="btn btn-ghost" onClick={()=>setShowChart(v=>!v)}>
+              {showChart ? 'Ocultar gráfico' : 'Mostrar gráfico'}
+            </button>
           </div>
         </section>
 
-        {/* tabela */}
+        {/* GRÁFICO (opcional) */}
+        {showChart && !!chartData.length && (
+          <section className="admin__charts">
+            <div className="chart-card">
+              <div className="chart-head">
+                <h3>Distribuição dos Serviços (%)</h3>
+                <small>Total: {chartData.reduce((a, b) => a + b.value, 0)}</small>
+              </div>
+
+              <div className="chart-body">
+                <div className="donut-wrap">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={chartData}
+                        dataKey="value"
+                        nameKey="name"
+                        cx="50%" cy="50%"
+                        innerRadius={58} outerRadius={95}
+                        paddingAngle={2}
+                        stroke="#0b0b0b" strokeWidth={2}
+                      >
+                        {chartData.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                        ))}
+                      </Pie>
+                      <Tooltip content={<DonutTooltip />} />
+                    </PieChart>
+                  </ResponsiveContainer>
+
+                  <div className="donut-center">
+                    <div className="donut-total">{chartData.reduce((a,b)=>a+b.value,0)}</div>
+                    <div className="donut-label">serviços</div>
+                  </div>
+                </div>
+
+                <ul className="chart-legend">
+                  {chartData.map((d, i) => (
+                    <li key={d.name}>
+                      <span className="dot" style={{ background: COLORS[i % COLORS.length] }} />
+                      <span className="leg-name">{d.name}</span>
+                      <span className="leg-val">{d.value}</span>
+                      <span className="leg-pct">{d.pct.toFixed(1)}%</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          </section>
+        )}
+
+        {/* TABELA */}
         <section className="admin__tablewrap">
           <table className="admin__table">
             <thead>
@@ -463,8 +500,14 @@ export default function Admin() {
 
                 return (
                   <tr key={it.id} className={rowClass}>
-                    <td title={String(it.data_entrada||'')}><div>{Number.isFinite(eMs)?formatDataManaus(eMs):'-'}</div><small>{Number.isFinite(eMs)?formatHoraManaus(eMs):''}</small></td>
-                    <td title={String(it.data_saida||'')}><div>{Number.isFinite(sMs)?formatDataManaus(sMs):'-'}</div><small>{Number.isFinite(sMs)?formatHoraManaus(sMs):''}</small></td>
+                    <td title={String(it.data_entrada||'')}>
+                      <div>{Number.isFinite(eMs)?formatDataManaus(eMs):'-'}</div>
+                      <small>{Number.isFinite(eMs)?formatHoraManaus(eMs):''}</small>
+                    </td>
+                    <td title={String(it.data_saida||'')}>
+                      <div>{Number.isFinite(sMs)?formatDataManaus(sMs):'-'}</div>
+                      <small>{Number.isFinite(sMs)?formatHoraManaus(sMs):''}</small>
+                    </td>
                     <td>{fmtHMS(dur)}</td>
                     <td>{it.placa}</td>
                     <td>{it.modelo}</td>
