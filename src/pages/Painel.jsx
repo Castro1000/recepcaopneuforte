@@ -4,8 +4,8 @@ import { useEffect, useState, useRef } from 'react';
 import { io } from 'socket.io-client';
 
 // use o que preferir:
-const API_BASE = 'http://localhost:3001';
-//const API_BASE = 'https://recepcaopneuforte.onrender.com';
+// const API_BASE = 'http://localhost:3001';
+const API_BASE = 'https://recepcaopneuforte.onrender.com';
 
 // de fora do componente para não reconectar toda hora
 const socket = io(API_BASE);
