@@ -4,10 +4,8 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import './Admin.css';
 
-const API_BASE =
-  /localhost|127\.0\.0\.1/.test(window.location.hostname)
-    ? 'http://localhost:3001'
-    : 'https://recepcaopneuforte.onrender.com';
+// const API_BASE = 'http://localhost:3001';
+const API_BASE = 'https://recepcaopneuforte.onrender.com';
 
 // ---------- utils ----------
 function parseDbDateManaus(input) {
