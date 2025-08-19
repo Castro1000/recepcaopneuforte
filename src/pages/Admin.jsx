@@ -4,9 +4,10 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
 import './Admin.css';
+import BotaoSair from "../components/BotaoSair";
 
-const API_BASE = 'https://recepcaopneuforte.onrender.com';
-//const API_BASE = 'http://localhost:3001';
+//const API_BASE = 'https://recepcaopneuforte.onrender.com';
+const API_BASE = 'http://localhost:3001';
 
 // ---------- utils ----------
 function parseDbDateManaus(input) {
@@ -318,7 +319,7 @@ export default function Admin() {
   return (
     <div className="admin">
       <header className="admin__header">
-        <h1>📊 Administração — Recepção</h1>
+        <h1>📊 Administração — Recepção <BotaoSair />  </h1> 
 
         <div className="admin__header-right">
           <div className="status-filter" ref={menuRef}>

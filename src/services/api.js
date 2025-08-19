@@ -4,7 +4,7 @@ import axios from "axios";
 const baseURL = (import.meta.env.VITE_API_BASE || "").replace(/\/+$/, "");
 
 const api = axios.create({
-  baseURL,             // ex.: https://recepcaopneuforte.onrender.com
+  baseURL,             // ex.: https://recepcaopneuforte.onrender.com//
   timeout: 20000,
 });
 

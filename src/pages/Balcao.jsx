@@ -1,6 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import './Balcao.css';
+import BotaoSair from "../components/BotaoSair";
+
+
 
 //const API_BASE = 'http://localhost:3001';
 const API_BASE = 'https://recepcaopneuforte.onrender.com';
@@ -8,6 +11,7 @@ const API_BASE = 'https://recepcaopneuforte.onrender.com';
 /** Interpreta data do MySQL como Manaus quando vier "YYYY-MM-DD HH:mm:ss".
  *  Se vier ISO/Z ou Date, também funciona. Retorna timestamp (ms).
  */
+
 function parseDbDateManaus(input) {
   if (!input) return NaN;
   if (input instanceof Date) return input.getTime();
@@ -37,6 +41,8 @@ function parseDbDateManaus(input) {
   t = Date.parse(s3);
   return t;
 }
+
+
 
 function formatHoraManaus(ts) {
   if (!Number.isFinite(ts)) return '-';
@@ -262,6 +268,7 @@ export default function Balcao() {
   // -----------------------------------
   return (
     <div className="balcao-container">
+      
       {/* animação para o destaque (blink) */}
       <style>{`
         @keyframes blinkCard {
@@ -272,7 +279,7 @@ export default function Balcao() {
           animation: blinkCard 1s ease-in-out infinite;
         }
       `}</style>
-
+      
       <div className="cadastro-section" aria-hidden={!!destaque}>
         <h1>🚗 Cadastro Rápido</h1>
 
@@ -381,7 +388,7 @@ export default function Balcao() {
       </div>
 
       <div className="fila-section" aria-hidden={!!destaque}>
-        <h2>📋 Fila de Atendimento</h2>
+        <h2>📋 Fila de Atendimento <BotaoSair />  </h2>
 
         <div className="carros-grid">
           {carros.map((carro) => {

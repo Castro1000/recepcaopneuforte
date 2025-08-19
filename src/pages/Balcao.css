@@ -472,3 +472,6 @@ body, html, #root {
 @media (max-width: 600px) {
   .carro-card { grid-template-columns: 1fr auto; padding: 12px; }
 }
+
+
+
