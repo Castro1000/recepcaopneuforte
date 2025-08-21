@@ -9,7 +9,18 @@ import BotaoSair from "../components/BotaoSair";
 //const API_BASE = 'http://localhost:3001';
 const API_BASE = 'https://recepcaopneuforte.onrender.com';
 
-// ---------- utils ----------
+/* =========================
+   Ícone SVG (engrenagem)
+========================= */
+const IconGear = (props) => (
+  <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" {...props}>
+    <path d="M12 8.5a3.5 3.5 0 1 1 0 7.01 3.5 3.5 0 0 1 0-7.01Zm8.94 3.06-.93-.53.06-.99a1 1 0 0 0-.63-.96l-1.02-.41-.41-1.02a1 1 0 0 0-.96-.63l-.99.06-.53-.93a1 1 0 0 0-1.05-.47l-1.04.26-.76-.69a1 1 0 0 0-1.34 0l-.76.69-1.04-.26a1 1 0 0 0-1.05.47l-.53.93-.99-.06a1 1 0 0 0-.96.63l-.41 1.02-1.02.41a1 1 0 0 0-.63.96l.06.99-.93.53a1 1 0 0 0-.47 1.05l.26 1.04-.69.76a1 1 0 0 0 0 1.34l.69.76-.26 1.04a1 1 0 0 0 .47 1.05l.93.53-.06.99a1 1 0 0 0 .63.96l1.02.41.41 1.02a1 1 0 0 0 .96.63l.99-.06.53.93a1 1 0 0 0 1.05.47l1.04-.26.76.69a1 1 0 0 0 1.34 0l.76-.69 1.04.26a1 1 0 0 0 1.05-.47l.53-.93.99.06a1 1 0 0 0 .96-.63l.41-1.02 1.02-.41a1 1 0 0 0 .63-.96l-.06-.99.93-.53a1 1 0 0 0 .47-1.05l-.26-1.04.69-.76a1 1 0 0 0 0-1.34l-.69-.76.26-1.04a1 1 0 0 0-.47-1.05ZM12 6.5a5.5 5.5 0 1 0 0 10.99 5.5 5.5 0 0 0 0-10.99Z" fill="currentColor"/>
+  </svg>
+);
+
+/* =========================
+   Utils de data/tempo
+========================= */
 function parseDbDateManaus(input) {
   if (!input) return NaN;
   if (input instanceof Date) return input.getTime();
@@ -57,7 +68,9 @@ function toYYYYMMDD(d) {
   return `${yy}-${mm}-${dd}`;
 }
 
-// ---------- componente ----------
+/* =========================
+   Componente principal
+========================= */
 export default function Admin() {
   const [tab, setTab] = useState('hoje');
   const [placa, setPlaca] = useState('');
@@ -74,8 +87,16 @@ export default function Admin() {
   const [page, setPage] = useState(1);
   const pageSize = 15;
 
-  // >>> Toggle do gráfico (escondido por padrão)
+  // Gráfico (oculto por padrão)
   const [showChart, setShowChart] = useState(false);
+
+  // ===== Modais de usuários/senhas =====
+  const [showUsuarios, setShowUsuarios] = useState(false);
+  const [showTrocarSenha, setShowTrocarSenha] = useState(false);
+  const [usuarios, setUsuarios] = useState([]);
+  const [usuariosLoading, setUsuariosLoading] = useState(false);
+  const [usuariosErr, setUsuariosErr] = useState('');
+  const [selUser, setSelUser] = useState(null);
 
   // ---- fetch helpers
   async function fetchJson(url) {
@@ -147,7 +168,7 @@ export default function Admin() {
   const buscarPeriodo = () => runBusca('periodo');
   const buscarPorPlaca = () => runBusca('placa');
 
-  // >>> NOVO: botão "Hoje" seta data de hoje e já busca
+  // Botão "Hoje" seta data de hoje e já busca
   function handleHoje() {
     const d = toYYYYMMDD(new Date());
     setFrom(d);
@@ -182,7 +203,6 @@ export default function Admin() {
       if (dur < minDur) { minDur = dur; minId = it.id; }
     }
 
-    // “Serviço mais demorado” = texto completo dos serviços do carro mais demorado
     let svcMais = null;
     if (maxItem) {
       const servicosCheios = [maxItem.servico, maxItem.servico2, maxItem.servico3].filter(Boolean).join(' | ');
@@ -217,6 +237,9 @@ export default function Admin() {
     return items.slice(start, start + pageSize);
   }, [items, page]);
 
+  /* =========================
+     Exportar PDF (sem "Cor")
+  ========================= */
   function exportPDF() {
     if (!items.length) return;
 
@@ -226,38 +249,52 @@ export default function Admin() {
 
     const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
     const pageWidth = doc.internal.pageSize.getWidth();
+    const marginLeft = 40;
+    const marginRight = 40;
+    const usable = pageWidth - marginLeft - marginRight;
 
+    // Cabeçalho
     doc.setFont('helvetica', 'bold'); doc.setFontSize(16);
-    doc.text('Administração — Recepção', 40, 40);
+    doc.text('Administração — Recepção', marginLeft, 40);
 
     doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
     const gerado = new Date().toLocaleString('pt-BR');
-    doc.text(`Período: ${from} a ${to}   |   Status: ${statusLabel}   |   Gerado em: ${gerado}`, 40, 60);
+    doc.text(
+      `Período: ${from} a ${to}   |   Status: ${statusLabel}   |   Gerado em: ${gerado}`,
+      marginLeft, 60
+    );
 
+    // Serviço mais demorado
     const svcMais = kpis.servicoMais
       ? `${kpis.servicoMais.nome} — ${fmtHMS(kpis.servicoMais.duracao)}  (${(kpis.servicoMais.carro.modelo || '').toUpperCase()} · ${kpis.servicoMais.carro.placa})`
       : '—';
 
+    // KPIs topo
     autoTable(doc, {
       startY: 80,
       theme: 'grid',
-      styles: { fontSize: 10, cellPadding: 6 },
+      styles: { fontSize: 10, cellPadding: 6, overflow: 'linebreak' },
       head: [[ 'Total', 'Em andamento', 'Finalizados', 'Serviço mais demorado' ]],
       body: [[ String(kpis.total), String(kpis.andamento), String(kpis.finalizados), svcMais ]],
-      columnStyles: { 0:{cellWidth:80}, 1:{cellWidth:110}, 2:{cellWidth:90}, 3:{cellWidth: pageWidth-40-40-(80+110+90)} },
-      margin: { left: 40, right: 40 },
-      headStyles: { fillColor: [15, 60, 70] }
+      margin: { left: marginLeft, right: marginRight },
+      headStyles: { fillColor: [15, 60, 70] },
+      columnStyles: {
+        0: { cellWidth: 80 },
+        1: { cellWidth: 110 },
+        2: { cellWidth: 90 },
+        3: { cellWidth: usable - (80 + 110 + 90) }
+      }
     });
 
-    const startY = (doc.lastAutoTable?.finalY) ? doc.lastAutoTable.finalY + 12 : 120;
+    const startY = (doc.lastAutoTable?.finalY ?? 120) + 12;
 
+    // Tabela principal (sem "Cor" no PDF)
     const columns = [
       { header: 'Entrada', dataKey: 'entrada' },
       { header: 'Saída',   dataKey: 'saida' },
       { header: 'Dur.',    dataKey: 'dur' },
       { header: 'Placa',   dataKey: 'placa' },
       { header: 'Modelo',  dataKey: 'modelo' },
-      { header: 'Cor',     dataKey: 'cor' },
       { header: 'Serviços',dataKey: 'servicos' },
       { header: 'Mov.',    dataKey: 'mov' },
       { header: 'Status',  dataKey: 'status' },
@@ -276,12 +313,16 @@ export default function Admin() {
         dur: fmtHMS(dur),
         placa: it.placa || '',
         modelo: it.modelo || '',
-        cor: it.cor || '',
         servicos: servs || '-',
         mov: it.num_movimento || '-',
         status: isFinal ? 'FINALIZADO' : 'EM ANDAMENTO'
       };
     });
+
+    // Larguras fixas + dinâmica para "Serviços"
+    const wEntrada = 100, wSaida = 100, wDur = 55, wPlaca = 70, wModelo = 110, wMov = 60, wStatus = 110;
+    const fixed = wEntrada + wSaida + wDur + wPlaca + wModelo + wMov + wStatus;
+    const wServ = Math.max(140, usable - fixed);
 
     autoTable(doc, {
       startY,
@@ -289,12 +330,28 @@ export default function Admin() {
       head: [columns.map(c => c.header)],
       body: rows.map(r => columns.map(c => r[c.dataKey])),
       styles: { fontSize: 9, cellPadding: 4, overflow: 'linebreak' },
+      margin: { left: marginLeft, right: marginRight },
+      headStyles: { fillColor: [9, 35, 45] },
       columnStyles: {
-        0:{cellWidth:100}, 1:{cellWidth:100}, 2:{cellWidth:55}, 3:{cellWidth:70},
-        4:{cellWidth:110}, 5:{cellWidth:70}, 6:{cellWidth:260}, 7:{cellWidth:60}, 8:{cellWidth:110}
+        0:{ cellWidth: wEntrada },
+        1:{ cellWidth: wSaida   },
+        2:{ cellWidth: wDur     },
+        3:{ cellWidth: wPlaca   },
+        4:{ cellWidth: wModelo  },
+        5:{ cellWidth: wServ, valign: 'top' },
+        6:{ cellWidth: wMov     },
+        7:{ cellWidth: wStatus  },
       },
-      margin: { left: 40, right: 40 },
-      headStyles: { fillColor: [9, 35, 45] }
+      didDrawPage() {
+        const page = doc.internal.getNumberOfPages();
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(9);
+        doc.text(
+          `Página ${page}`,
+          pageWidth - marginRight - 50,
+          doc.internal.pageSize.getHeight() - 10
+        );
+      }
     });
 
     doc.save(`relatorio_${from}_a_${to}.pdf`);
@@ -316,10 +373,38 @@ export default function Admin() {
     );
   };
 
+  // ===== Usuários: abrir/fechar e buscar =====
+  async function fetchUsuarios() {
+    try {
+      setUsuariosLoading(true);
+      setUsuariosErr('');
+      const token = localStorage.getItem('token');
+      const r = await fetch(`${API_BASE}/api/usuarios`, {
+        headers: { 'Authorization': token ? `Bearer ${token}` : '' }
+      });
+      if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+      const data = await r.json();
+      setUsuarios(Array.isArray(data) ? data : []);
+    } catch (e) {
+      setUsuariosErr('Não foi possível carregar os usuários. Verifique o login/token ou o backend.');
+      setUsuarios([]);
+    } finally {
+      setUsuariosLoading(false);
+    }
+  }
+  function abrirUsuarios() {
+    setShowUsuarios(true);
+    fetchUsuarios();
+  }
+  function abrirTrocarSenha(user) {
+    setSelUser(user);
+    setShowTrocarSenha(true);
+  }
+
   return (
     <div className="admin">
       <header className="admin__header">
-        <h1>📊 Administração — Recepção <BotaoSair />  </h1> 
+        <h1>📊 Administração — Recepção</h1>
 
         <div className="admin__header-right">
           <div className="status-filter" ref={menuRef}>
@@ -336,10 +421,21 @@ export default function Admin() {
           </div>
 
           <div className="admin__tabs">
-            {/* Troca: usa handleHoje */}
             <button className={tab==='hoje'?'is-active':''} onClick={handleHoje}>Hoje</button>
             <button className={tab==='periodo'?'is-active':''} onClick={() => setTab('periodo')}>Período</button>
             <button className={tab==='placa'?'is-active':''} onClick={() => setTab('placa')}>Placa</button>
+
+            {/* Engrenagem (modal de usuários) */}
+            <button
+              className="btn btn-ghost gear-btn"
+              title="Gerenciar usuários"
+              onClick={abrirUsuarios}
+              aria-haspopup="dialog"
+            >
+              <IconGear />
+            </button>
+
+            <BotaoSair />
           </div>
         </div>
       </header>
@@ -419,7 +515,6 @@ export default function Admin() {
           </div>
 
           <div className="kpi tools">
-            {/*<button className="btn btn-secondary" onClick={exportCSV} disabled={!items.length}>Baixar CSV</button>*/}
             <button className="btn btn-secondary" onClick={exportPDF} disabled={!items.length}>Baixar PDF</button>
             <button className="btn btn-ghost" onClick={()=>setShowChart(v=>!v)}>
               {showChart ? 'Ocultar gráfico' : 'Mostrar gráfico'}
@@ -528,6 +623,124 @@ export default function Admin() {
             <button className="btn" disabled={page>=totalPages} onClick={()=>setPage(p=>Math.min(totalPages,p+1))}>▶</button>
           </div>
         </section>
+      </div>
+
+      {/* ===== MODAL: Lista de Usuários ===== */}
+      {showUsuarios && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={() => setShowUsuarios(false)}>
+          <div className="modal users-modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-head">
+              <h3>Usuários</h3>
+              <button className="btn btn-ghost" onClick={() => setShowUsuarios(false)}>✕</button>
+            </div>
+
+            <div className="modal-body">
+              {usuariosLoading && <div className="hint">Carregando…</div>}
+              {usuariosErr && <div className="error">{usuariosErr}</div>}
+              {!usuariosLoading && !usuariosErr && (
+                <ul className="users-list">
+                  {usuarios.map(u => (
+                    <li key={u.id} className="user-row">
+                      <div className="user-info">
+                        <div className="user-name">{u.nome}</div>
+                        <div className="user-login">{u.usuario}</div>
+                      </div>
+                      <div className="user-actions">
+                        <button className="btn btn-primary btn-sm" onClick={() => { setShowUsuarios(false); abrirTrocarSenha(u); }}>
+                          Trocar senha
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+                  {!usuarios.length && <li className="empty">Nenhum usuário encontrado.</li>}
+                </ul>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== MODAL: Trocar Senha ===== */}
+      {showTrocarSenha && selUser && (
+        <ModalTrocarSenha
+          user={selUser}
+          onClose={() => setShowTrocarSenha(false)}
+          onDone={() => { setShowTrocarSenha(false); setShowUsuarios(true); }}
+        />
+      )}
+    </div>
+  );
+}
+
+/* =========================
+   ModalTrocarSenha
+========================= */
+function ModalTrocarSenha({ user, onClose, onDone }) {
+  const [p1, setP1] = useState('');
+  const [p2, setP2] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [err, setErr] = useState('');
+  const [ok, setOk] = useState('');
+
+  async function salvar() {
+    setErr(''); setOk('');
+    if (p1.length < 4) { setErr('A senha deve ter pelo menos 4 caracteres.'); return; }
+    if (p1 !== p2) { setErr('As senhas não conferem.'); return; }
+
+    try {
+      setSubmitting(true);
+      const token = localStorage.getItem('token');
+      const r = await fetch(`${API_BASE}/api/usuarios/${user.id}/senha`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': token ? `Bearer ${token}` : ''
+        },
+        body: JSON.stringify({ novaSenha: p1 })
+      });
+      if (!r.ok) {
+        const t = await r.text();
+        throw new Error(t || `${r.status} ${r.statusText}`);
+      }
+      setOk('Senha alterada com sucesso!');
+      setTimeout(() => { onClose(); onDone?.(); }, 900);
+    } catch (e) {
+      setErr('Falha ao alterar senha. Verifique permissões/servidor.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={onClose}>
+      <div className="modal small" onClick={e => e.stopPropagation()}>
+        <div className="modal-head">
+          <h3>Trocar senha</h3>
+          <button className="btn btn-ghost" onClick={onClose}>✕</button>
+        </div>
+        <div className="modal-body">
+          <div className="field">
+            <label>Usuário</label>
+            <input type="text" value={`${user.nome} (${user.usuario})`} readOnly />
+          </div>
+          <div className="field">
+            <label>Nova senha</label>
+            <input type="password" value={p1} onChange={e=>setP1(e.target.value)} autoFocus />
+          </div>
+          <div className="field">
+            <label>Confirmar senha</label>
+            <input type="password" value={p2} onChange={e=>setP2(e.target.value)} />
+          </div>
+
+          {err && <div className="error" style={{marginTop:8}}>{err}</div>}
+          {ok && <div className="hint" style={{marginTop:8}}>{ok}</div>}
+        </div>
+        <div className="modal-foot">
+          <button className="btn btn-secondary" onClick={onClose} disabled={submitting}>Cancelar</button>
+          <button className="btn btn-primary" onClick={salvar} disabled={submitting}>
+            {submitting ? 'Salvando…' : 'Salvar'}
+          </button>
+        </div>
       </div>
     </div>
   );

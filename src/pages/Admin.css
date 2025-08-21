@@ -92,7 +92,8 @@ html, body{
 }
 
 /* Botões */
-.btn{ border:none; border-radius:8px; padding:9px 10px; cursor:pointer; font: weight 600px;; font-size:.99rem; }
+.btn{ border:none; border-radius:8px; padding:9px 10px; cursor:pointer;
+  font-weight:700; font-size:.99rem; }
 .btn:disabled{ opacity:.6; cursor:not-allowed; }
 .btn-primary{ background:linear-gradient(180deg,#10b981,#0ea472); color:#fff; }
 .btn-secondary{ background:linear-gradient(180deg,#3b82f6,#2563eb); color:#fff; }
@@ -210,3 +211,179 @@ html, body{
   .admin__table thead th:nth-child(8),
   .admin__table tbody td:nth-child(8){ display:none; } /* "Mov." */
 }
+
+
+/* ===== Modais (Usuários / Trocar senha) ===== */
+
+/* Botão da engrenagem (espaçamento) */
+.gear-btn{
+  display:inline-flex;align-items:center;justify-content:center;
+  padding:6px 8px;margin-left:8px;border-radius:10px;
+}
+
+/* Fundo escuro */
+.modal-backdrop{
+  position:fixed;inset:0;z-index:9990;
+  background:rgba(0,0,0,.45);
+  backdrop-filter:saturate(120%) blur(2px);
+  display:flex;align-items:center;justify-content:center;
+  animation:fadeIn .15s ease-out;
+}
+
+/* Caixa base */
+.modal{
+  width:720px;max-width:92vw;
+  background:#0f1a1c;color:#eaf4f5;
+  border:1px solid #163338;border-radius:14px;
+  box-shadow:0 10px 30px rgba(0,0,0,.5);
+  animation:pop .18s ease-out;
+}
+.modal.small{ width:420px;max-width:92vw; }
+.modal.users-modal{ width:520px;max-width:92vw; }
+
+.modal-head,.modal-foot{
+  display:flex;align-items:center;justify-content:space-between;gap:8px;
+  padding:12px 14px;
+  border-bottom:1px solid #163338;
+}
+.modal-foot{ border-top:1px solid #163338;border-bottom:0; }
+.modal-body{ padding:12px 14px;max-height:65vh;overflow:auto; }
+
+/* Lista de usuários */
+.users-list{ list-style:none;margin:0;padding:0; }
+.user-row{
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:8px 4px;border-bottom:1px dashed #12343a;
+}
+.user-info{ min-width:0;display:flex;flex-direction:column;gap:2px; }
+.user-name{ font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+.user-login{ font-size:12px;opacity:.8;color:#9cc; }
+
+.btn-sm{ padding:6px 10px;font-size:13px;border-radius:10px; }
+
+/* Campos do modal */
+.modal .field{ display:flex;flex-direction:column;gap:6px;margin-bottom:10px; }
+.modal .field label{ font-size:12px;opacity:.8; }
+.modal .field input{
+  background:#0b1416;border:1px solid #17333a;color:#eaf4f5;
+  padding:8px 10px;border-radius:8px;outline:none;
+}
+.modal .field input:focus{
+  border-color:#1f6;box-shadow:0 0 0 2px rgba(31,246,158,.18);
+}
+
+/* Feedback dentro do modal */
+.modal .hint{
+  background:#0e2a24;border:1px solid #1b6;color:#b7ffe6;
+  padding:8px 10px;border-radius:8px;
+}
+.modal .error{
+  background:#2a1313;border:1px solid #a33;color:#ffbcbc;
+  padding:8px 10px;border-radius:8px;
+}
+
+/* Animações */
+@keyframes fadeIn{ from{opacity:0} to{opacity:1} }
+@keyframes pop{ from{transform:translateY(4px) scale(.98);opacity:.9} to{transform:translateY(0) scale(1);opacity:1} }
+
+/* Mobile */
+@media (max-width:420px){
+  .modal-body{ max-height:70vh; }
+  .user-row{ align-items:flex-start; }
+}
+
+
+/* ====================== */
+/*  RESPONSIVO – MOBILE   */
+/* ====================== */
+
+/* Header empilha no mobile */
+@media (max-width: 640px){
+  .admin__header{
+    flex-direction: column; align-items: stretch; gap:8px;
+    position: sticky; top: 0; z-index: 6;
+  }
+  .admin__header-right{ flex-wrap: wrap; gap:8px; }
+  .status-filter{ width: 100%; }
+  .status-btn{ width:100%; justify-content: space-between; }
+  .admin__tabs{ width:100%; }
+  .admin__tabs button{
+    flex:1 1 auto; min-width:0;
+    text-align:center;
+  }
+}
+
+/* Filtros viram uma coluna e inputs ocupam 100% */
+@media (max-width: 640px){
+  .admin__filters{ padding:10px; }
+  .filter-row{ flex-direction: column; align-items: stretch; gap:8px; }
+  .field{ width: 100%; }
+  .field input[type="date"], .field input[type="text"]{ width:100%; }
+  .btn.btn-primary{ width:100%; }
+}
+
+/* KPIs adaptam: 2 colunas (<=640), 1 coluna (<=430) */
+@media (max-width: 640px){
+  .admin__kpis{ grid-template-columns: repeat(2, minmax(140px,1fr)); padding:8px; }
+  .kpi.tools{ grid-column: span 2; }
+}
+@media (max-width: 430px){
+  .admin__kpis{ grid-template-columns: 1fr; }
+  .kpi.tools{ grid-column: auto; }
+}
+
+/* Gráfico: layout de 1 coluna, card full width */
+@media (max-width: 900px){
+  .admin__charts{ padding: 6px 12px 0; }
+}
+@media (max-width: 640px){
+  .chart-card{ width:100%; max-width:none; }
+  .chart-body{ grid-template-columns: 1fr; gap:10px; }
+  .donut-wrap{ width: 170px; height: 150px; }
+  .donut-total{ font-size:1.8rem; }
+}
+@media (max-width: 420px){
+  .donut-wrap{ width: 140px; height: 130px; }
+  .donut-total{ font-size:1.6rem; }
+  .donut-label{ font-size:.8rem; }
+}
+
+/* Tabela: melhora leitura no mobile
+   - scroll horizontal se precisar
+   - esconde colunas menos críticas em telas pequenas
+*/
+.admin__tablewrap{ overflow-x:auto; }
+@media (max-width: 640px){
+  /* já escondemos Modelo (5) e Mov. (8) no seu CSS */
+  .admin__table thead th, .admin__table tbody td{ padding:8px 6px; font-size:.9rem; }
+}
+@media (max-width: 520px){
+  /* Esconde "Saída" (2) e "Cor" (6) só no mobile estreito */
+  .admin__table thead th:nth-child(2),
+  .admin__table tbody td:nth-child(2){ display:none; } /* Saída */
+  .admin__table thead th:nth-child(6),
+  .admin__table tbody td:nth-child(6){ display:none; } /* Cor */
+}
+@media (max-width: 420px){
+  /* Opcional: reduzir ainda mais – esconde "Dur." (3) */
+  .admin__table thead th:nth-child(3),
+  .admin__table tbody td:nth-child(3){ display:none; } /* Dur. */
+  .badge{ font-size:.72rem; }
+}
+
+/* Pager com toque confortável */
+@media (max-width: 640px){
+  .pager{ gap:14px; }
+  .pager .btn{ padding:10px 14px; }
+}
+
+/* Modais já tinham base mobile; refinamos */
+@media (max-width: 480px){
+  .modal{ width: 96vw; }
+  .modal.small{ width: 92vw; }
+  .modal.users-modal{ width: 92vw; }
+  .btn-sm{ width: 100%; }           /* botão "Trocar senha" ocupa linha quando apertado */
+  .user-row{ flex-direction: column; align-items: stretch; gap:6px; }
+  .user-actions{ display:flex; }
+}
+
