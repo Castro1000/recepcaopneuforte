@@ -4,8 +4,8 @@ import { useEffect, useState, useRef } from 'react';
 import { io } from 'socket.io-client';
 
 // use o que preferir:
-// const API_BASE = 'http://localhost:3001';
-const API_BASE = 'https://recepcaopneuforte.onrender.com';
+const API_BASE = 'http://localhost:3001';
+//const API_BASE = 'https://recepcaopneuforte.onrender.com';
 
 // de fora do componente para não reconectar toda hora
 const socket = io(API_BASE);
@@ -36,6 +36,8 @@ export default function Painel() {
       case 'HR-V': return 'agá érre vê';
       case 'CR-V': return 'cê érre vê';
       case 'FERRARI': return 'FÉRRARI';
+      case 'MOBI': return 'MÓBI';
+
       default: return m;
     }
   };
@@ -339,7 +341,7 @@ export default function Painel() {
         <div className="titulo" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <img src="/img/logo_pneuforte.png" alt="Pneu Forte" style={{ height: 65, objectFit: 'contain' }} />
         </div>
-        <div className="previsao" style={{ fontSize: '3rem', fontWeight: 800, letterSpacing: '2px', textTransform: 'uppercase', textShadow: '0 0 10px cyan' }}>
+        <div className="previsao" style={{ fontSize: '3rem', fontWeight: 800, letterSpacing: '15px', textTransform: 'uppercase', textShadow: '0 0 10px cyan' }}>
           LISTA DE ESPERA
         </div>
       </div>

@@ -5,8 +5,8 @@ import BotaoSair from "../components/BotaoSair";
 
 
 
-//const API_BASE = 'http://localhost:3001';
-const API_BASE = 'https://recepcaopneuforte.onrender.com';
+const API_BASE = 'http://localhost:3001';
+//const API_BASE = 'https://recepcaopneuforte.onrender.com';
 
 /** Interpreta data do MySQL como Manaus quando vier "YYYY-MM-DD HH:mm:ss".
  *  Se vier ISO/Z ou Date, também funciona. Retorna timestamp (ms).
