@@ -9,6 +9,30 @@ const Login = () => {
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
+  // helpers para normalizar e decidir rota
+  const strip = (s='') => s.normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+  const toTipo = (s='') => strip(String(s).trim()).toUpperCase();
+
+  const decidePath = (tipo='') => {
+    const t = toTipo(tipo);
+    if (['RECEPCAO','PAINEL','TV'].includes(t)) return '/painel';
+    if (['VENDEDOR','BALCAO'].includes(t))     return '/balcao';
+    if (['MIDIA'].includes(t))                 return '/midia';   // 👈 NOVO
+    if (['ADMIN','ADMINISTRADOR'].includes(t)) return '/admin';
+    return '/balcao';
+  };
+
+  const parseJwt = (token) => {
+    try {
+      const base64Url = token.split('.')[1];
+      const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+      const json = decodeURIComponent(
+        atob(base64).split('').map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join('')
+      );
+      return JSON.parse(json);
+    } catch { return null; }
+  };
+
   const handleLogin = async (e) => {
     e.preventDefault();
     setErro('');
@@ -21,32 +45,34 @@ const Login = () => {
     try {
       setLoading(true);
       const { data } = await api.post('/api/login', { usuario, senha });
-
-      // Aceita { token, tipo } ou { ok, token, user:{ perfil } }
+      // backend deve retornar { token, tipo, redirect }
       const token = data?.token;
-      const tipo = data?.tipo || data?.user?.perfil;
-
       if (!token) {
         setErro('Resposta inesperada do servidor.');
         return;
       }
 
+      // guarda infos úteis
       localStorage.setItem('token', token);
       localStorage.setItem('usuario', usuario);
-      if (tipo) localStorage.setItem('tipo', tipo);
+      if (data?.tipo) localStorage.setItem('tipo', data.tipo);
       if (data?.user) localStorage.setItem('user', JSON.stringify(data.user));
 
-      const perfil = (tipo || '').toString().toLowerCase();
+      // prioridade: usar redirect enviado pelo backend
+      let dest = data?.redirect;
 
-      if (['recepcao', 'recepção', 'painel', 'tv'].includes(perfil)) {
-        navigate('/painel');
-      } else if (['vendedor', 'balcao', 'balcão'].includes(perfil)) {
-        navigate('/balcao');
-      } else if (['admin', 'administrador'].includes(perfil)) {
-        navigate('/admin');
-      } else {
-        navigate('/balcao'); // fallback
+      // fallback: decidir pelo tipo retornado ou pelo claim do JWT
+      if (!dest) {
+        const tipoResp = data?.tipo || data?.user?.perfil;
+        let tipo = tipoResp ? toTipo(tipoResp) : '';
+        if (!tipo) {
+          const payload = parseJwt(token);
+          tipo = toTipo(payload?.tipo || '');
+        }
+        dest = decidePath(tipo);
       }
+
+      navigate(dest, { replace: true });
     } catch (err) {
       const status = err?.response?.status;
       const msg = err?.response?.data?.message;
@@ -130,7 +156,7 @@ const styles = {
   input: {
     padding: '10px',
     fontSize: '16px',
-    border: '1px solid #ccc', // <-- corrigido
+    border: '1px solid #ccc',
     borderRadius: '5px',
     outline: 'none',
   },

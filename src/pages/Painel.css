@@ -528,3 +528,39 @@ body:has(.destaque-finalizado){
   0%,100% { transform: translateX(-50%) scaleX(1); opacity: .65; }
   50%     { transform: translateX(-50%) scaleX(1.12); opacity: .8; }
 }
+
+
+/* === Overlay de mídia em tela cheia (sem cortes) === */
+.media-overlay{
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  background: #000;               /* sem transparência pra não “vazar” nada atrás */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* evita qualquer scroll acidental */
+  overflow: hidden;
+}
+
+/* vídeo/imagem: sempre mostrar 100% do conteúdo, sem crop */
+.media-el{
+  /* ocupa o viewport, mas preserva tudo */
+  width: 100vw;
+  height: 100vh;
+  max-width: 100vw;
+  max-height: 100vh;
+
+  object-fit: contain !important; /* 👈 nunca corta */
+  object-position: center center; /* centraliza */
+  background: #000;               /* barras laterais/topo ficam pretas */
+
+  display: block;
+  /* evita cliques/pause acidental em TVs com pointer */
+  pointer-events: none;
+}
+
+/* (opcional) se quiser garantir que nada de trás pisque durante transições */
+.painel, body, html{
+  background: #000;
+}

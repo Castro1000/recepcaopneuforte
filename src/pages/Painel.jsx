@@ -1,69 +1,86 @@
+// src/pages/Painel.jsx
 import './Painel.css';
 import axios from 'axios';
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
 
-// use o que preferir:
+// ajuste aqui conforme ambiente
 //const API_BASE = 'http://localhost:3001';
 const API_BASE = 'https://recepcaopneuforte.onrender.com';
 
-// de fora do componente para não reconectar toda hora
 const socket = io(API_BASE);
 
 export default function Painel() {
+  // -------- Fila / destaque --------
   const [fila, setFila] = useState([]);
   const [carroAtual, setCarroAtual] = useState(0);
   const [carroFinalizado, setCarroFinalizado] = useState(null);
   const [emDestaque, setEmDestaque] = useState(false);
 
-  //Liberação de áudio para TVs (OK no controle)
+  // Liberação de áudio
   const [audioOK, setAudioOK] = useState(false);
   const unlockBtnRef = useRef(null);
 
   const intervaloRef = useRef(null);
   const timeoutDestaqueRef = useRef(null);
 
-  // -------- helpers --------
-  const corrigirPronunciaModelo = (modelo) => {
-    const m = (modelo || '').toString().trim();
-    const upper = m.toUpperCase();
-    switch (upper) {
-      case 'KWID': return 'cuidi';
-      case 'BYD': return 'biu ai di';
-      case 'HB20': return 'agá bê vinte';
-      case 'ONIX': return 'ônix';
-      case 'T-CROSS': return 'tê cross';
-      case 'HR-V': return 'agá érre vê';
-      case 'CR-V': return 'cê érre vê';
-      case 'FERRARI': return 'FÉRRARI';
-      case 'MOBI': return 'MÓBI';
+  // -------- Playlist / overlay --------
+  const [playlist, setPlaylist] = useState([]);
+  const [overlayOn, setOverlayOn] = useState(false);
+  const [overlayIdx, setOverlayIdx] = useState(0);
+  const [windowSec, setWindowSec] = useState(90); // janela que considera o "bloco" do intervalo
+  const videoRef = useRef(null);
+  const imgTimerRef = useRef(null);
 
-      default: return m;
-    }
-  };
+  // suprimir reabertura no mesmo bloco
+  const suppressUntilRef = useRef(0);
+  const overlayBlockEndRef = useRef(0);
 
   const montaServicos = (c) =>
     [c?.servico, c?.servico2, c?.servico3].filter(Boolean).join(' | ');
+  const nowMS = () => Date.now();
 
+  // ------- Buscar fila -------
   const buscarFila = async () => {
     try {
       const { data } = await axios.get(`${API_BASE}/api/fila-servico`);
       if (Array.isArray(data)) setFila(data.slice(0, 7));
-      else console.error('A resposta da API não é um array:', data);
+      else console.error('A resposta da API /fila-servico não é um array:', data);
     } catch (err) {
       console.error('Erro ao buscar fila:', err);
     }
   };
 
-  // 1) carga inicial
+  // ------- Buscar playlist pública -------
+  const fetchPlaylist = async () => {
+    try {
+      const r = await fetch(`${API_BASE}/api/playlist`, { cache: 'no-store' });
+      if (!r.ok) throw new Error(await r.text());
+      const data = await r.json();
+      const items = Array.isArray(data) ? data : Array.isArray(data?.items) ? data.items : [];
+      setPlaylist(items || []);
+    } catch (e) {
+      console.warn('Falha ao buscar playlist:', e);
+      setPlaylist([]);
+    }
+  };
+
+  // ------- Cargas iniciais -------
   useEffect(() => {
     buscarFila();
+    fetchPlaylist();
   }, []);
 
-  // 2) carrossel rotativo (pausa quando tem destaque)
+  // ------- Atualizações periódicas -------
+  useEffect(() => {
+    const t1 = setInterval(buscarFila, 30000);   // fila a cada 30s
+    const t2 = setInterval(fetchPlaylist, 60000); // playlist a cada 60s
+    return () => { clearInterval(t1); clearInterval(t2); };
+  }, []);
+
+  // ------- carrossel lateral (pausa com destaque) -------
   useEffect(() => {
     if (intervaloRef.current) clearInterval(intervaloRef.current);
-
     if (fila.length > 1 && !carroFinalizado) {
       intervaloRef.current = setInterval(() => {
         setCarroAtual((prev) => (prev + 1) % fila.length);
@@ -71,31 +88,24 @@ export default function Painel() {
     } else {
       setCarroAtual(0);
     }
-
     return () => clearInterval(intervaloRef.current);
   }, [fila, carroFinalizado]);
 
-  // === Liberação de áudio (OK no controle) ===
+  // ================== Liberação de áudio ==================
   const unlockAudio = async () => {
     try {
       const a = new Audio('/motor.mp3');
       a.volume = 0;
       await a.play().catch(() => {});
-      a.pause();
-      a.currentTime = 0;
-
+      a.pause(); a.currentTime = 0;
       if ('speechSynthesis' in window) {
         const u = new SpeechSynthesisUtterance(' ');
         u.lang = 'pt-BR';
         window.speechSynthesis.speak(u);
       }
       setAudioOK(true);
-    } catch (e) {
-      console.warn('Falha ao liberar áudio:', e);
-      setAudioOK(true);
-    }
+    } catch { setAudioOK(true); }
   };
-
   useEffect(() => {
     if (!audioOK) {
       const t0 = Date.now();
@@ -111,110 +121,213 @@ export default function Painel() {
   useEffect(() => {
     const onKey = (e) => {
       const ok = e.key === 'Enter' || e.key === 'NumpadEnter' || e.key === ' ' || e.keyCode === 13 || e.keyCode === 32;
-      if (!audioOK && ok) {
-        e.preventDefault();
-        unlockAudio();
-      }
+      if (!audioOK && ok) { e.preventDefault(); unlockAudio(); }
     };
     document.addEventListener('keydown', onKey, true);
     return () => document.removeEventListener('keydown', onKey, true);
   }, [audioOK]);
 
-  // === Fala via Web Speech (fallback) ===
+  // ================== Helpers de áudio/voz ==================
+  const corrigirPronunciaModelo = (modelo) => {
+    const m = (modelo || '').toString().trim();
+    const upper = m.toUpperCase();
+    switch (upper) {
+      case 'KWID': return 'cuidi';
+      case 'BYD': return 'biu ai di';
+      case 'HB20': return 'agá bê vinte';
+      case 'ONIX': return 'ônix';
+      case 'T-CROSS': return 'tê cross';
+      case 'HR-V': return 'agá érre vê';
+      case 'CR-V': return 'cê érre vê';
+      case 'FERRARI': return 'FÉRRARI';
+      case 'MOBI': return 'MÓBI';
+      default: return m;
+    }
+  };
+
   const speak = (texto) => {
     if (!('speechSynthesis' in window)) return false;
     try {
       const u = new SpeechSynthesisUtterance(texto);
-      u.lang = 'pt-BR';
-      u.rate = 1.0;
+      u.lang = 'pt-BR'; u.rate = 1.0;
       const voices = window.speechSynthesis.getVoices?.() || [];
       const v = voices.find(v => v.lang?.toLowerCase().startsWith('pt')) || voices[0];
       if (v) u.voice = v;
-      window.speechSynthesis.cancel(); // evita fila acumulada
+      window.speechSynthesis.cancel();
       window.speechSynthesis.speak(u);
       return true;
-    } catch {
-      return false;
-    }
+    } catch { return false; }
   };
 
-  // === Player robusto para URL (inclui /api/tts) ===
   const playUrl = (url, { volume = 1, timeoutMs = 15000 } = {}) =>
     new Promise((resolve) => {
       const a = new Audio();
-      a.preload = 'auto';
-      a.crossOrigin = 'anonymous';
-      a.volume = volume;
-      // cache-bust para evitar cache agressivo em TVs
+      a.preload = 'auto'; a.crossOrigin = 'anonymous'; a.volume = volume;
       const sep = url.includes('?') ? '&' : '?';
       a.src = `${url}${sep}_=${Date.now()}`;
       let done = false;
-      const finish = (reason = 'ok') => {
-        if (done) return;
-        done = true;
-        try { a.pause(); } catch {}
-        resolve(reason);
-      };
-      a.addEventListener('canplay', () => {
-        // canplay costuma ser mais confiável que loadedmetadata em TVs
-        a.play().catch(() => finish('blocked'));
-      });
+      const finish = (reason='ok') => { if (done) return; done = true; try{a.pause();}catch{} resolve(reason); };
+      a.addEventListener('canplay', () => a.play().catch(() => finish('blocked')));
       a.addEventListener('ended', () => finish('ended'));
       a.addEventListener('error', () => finish('error'));
-      a.load(); // inicia o carregamento
+      a.load();
       setTimeout(() => finish('timeout'), timeoutMs);
     });
 
-  // === Player simples para arquivos locais (buzina, etc.) ===
   const playWithFallback = (url, { volume = 1, timeoutMs = 7000 } = {}) =>
     new Promise((resolve) => {
       const a = new Audio(url);
-      a.preload = 'auto';
-      a.volume = volume;
+      a.preload = 'auto'; a.volume = volume;
       let done = false;
-      const finish = (reason = 'ok') => {
-        if (done) return;
-        done = true;
-        try { a.pause(); } catch {}
-        resolve(reason);
-      };
+      const finish = (reason='ok') => { if (done) return; done = true; try{a.pause();}catch{} resolve(reason); };
       a.addEventListener('ended', () => finish('ended'));
       a.addEventListener('error', () => finish('error'));
       a.play().catch(() => finish('blocked'));
       setTimeout(() => finish('timeout'), timeoutMs);
     });
 
-  // 3) sockets: finalização + novo carro (REGISTRA UMA VEZ)
+  // ================== Overlay / Playlist ==================
+  const parseMaybe = (s) => (s ? new Date(s).getTime() : null);
+
+  const inDateWindow = (item, t) => {
+    const ini = parseMaybe(item.data_inicio);
+    const fim = parseMaybe(item.data_fim);
+    if (ini && t < ini) return false;
+    if (fim && t > fim) return false;
+    return true;
+  };
+
+  const visibleNow = (t) =>
+    (playlist || [])
+      .filter((x) => Number(x.ativo) === 1)
+      .filter((x) => inDateWindow(x, t))
+      .sort((a, b) => (a.ord ?? 0) - (b.ord ?? 0) || a.id - b.id);
+
+  const mustOpenOverlayNow = (t) =>
+    visibleNow(t).some((it) => {
+      const iv = Number(it.intervalo_minutos || 0);
+      if (iv <= 0) return true; // sem intervalo
+      const block = Math.floor(t / (iv * 60000)) * iv * 60000;
+      return t - block < windowSec * 1000;
+    });
+
+  useEffect(() => {
+    const tick = () => {
+      const t = nowMS();
+
+      // não reabrir durante supressão
+      if (t < suppressUntilRef.current) return;
+
+      if (carroFinalizado) {
+        if (overlayOn) stopOverlay(false);
+        return;
+      }
+      if (mustOpenOverlayNow(t)) {
+        if (!overlayOn) startOverlay(t);
+      } else {
+        if (overlayOn) stopOverlay(false);
+      }
+    };
+    const id = setInterval(tick, 500);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playlist, carroFinalizado, windowSec, overlayOn]);
+
+  const startOverlay = (tStart) => {
+    const items = visibleNow(tStart);
+    if (!items.length) return;
+    setOverlayIdx(0);
+    setOverlayOn(true);
+
+    // define fim do bloco atual para suprimir reabertura até lá
+    overlayBlockEndRef.current = tStart + windowSec * 1000;
+  };
+
+  // stopOverlay(closeAndSuppress=true): se terminar por fim do media, suprime reabrir até o fim do bloco
+  const stopOverlay = (closeAndSuppress = true) => {
+    setOverlayOn(false);
+    if (imgTimerRef.current) { clearTimeout(imgTimerRef.current); imgTimerRef.current = null; }
+    try {
+      const v = videoRef.current;
+      if (v) { v.pause(); v.removeAttribute('src'); v.load(); }
+    } catch {}
+    if (closeAndSuppress) {
+      // evita reabrir de novo no mesmo bloco
+      suppressUntilRef.current = Math.max(suppressUntilRef.current, overlayBlockEndRef.current || 0);
+    }
+  };
+
+  // roda um item e fecha o overlay imediatamente ao final
+  useEffect(() => {
+    if (!overlayOn) return;
+    const items = visibleNow(nowMS());
+    if (!items.length) return;
+
+    const current = items[overlayIdx % items.length];
+
+    if (imgTimerRef.current) { clearTimeout(imgTimerRef.current); imgTimerRef.current = null; }
+
+    const mediaSrc = current.src || `${API_BASE}${current.url}`;
+
+    if (current.tipo === 'VIDEO') {
+      const v = videoRef.current;
+      if (!v) return;
+      v.muted = true;
+      v.playsInline = true;
+      v.autoplay = true;
+      v.preload = 'auto';
+      v.src = mediaSrc;
+
+      // Fecha assim que terminar (sem esperar nada)
+      v.onended = () => stopOverlay(true);
+      v.onerror = () => stopOverlay(true);
+
+      v.onloadeddata = () => {
+        // começa a tocar assim que carregar
+        v.play().catch(() => stopOverlay(true));
+      };
+      // fallback: se nada tocar em 5s, fecha
+      const failTimer = setTimeout(() => stopOverlay(true), 5000);
+      v.onplaying = () => clearTimeout(failTimer);
+    } else {
+      const dur = Math.max(3, Number(current.duracao_seg || 10));
+      imgTimerRef.current = setTimeout(() => stopOverlay(true), dur * 1000);
+    }
+
+    return () => {
+      if (imgTimerRef.current) { clearTimeout(imgTimerRef.current); imgTimerRef.current = null; }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [overlayOn, overlayIdx]);
+
+  // ================== Sockets (finalização + novo carro) ==================
   useEffect(() => {
     const onCarroFinalizado = async (carro) => {
+      stopOverlay(true); // interrompe overlay imediatamente e suprime reabertura
+
       setCarroFinalizado(carro);
       setEmDestaque(true);
 
+      setFila((prev) => {
+        const nova = prev.filter((c) => c.id !== carro.id);
+        setCarroAtual((idx) => (idx >= nova.length ? 0 : idx));
+        return nova;
+      });
+
       const tocarFluxo = async () => {
         try {
-          // 1) toquezinho inicial
           await playWithFallback('/busina.mp3', { timeoutMs: 2000 }).catch(() => {});
-
-          // 2) MOTOR + freiada no meio (com fallback)
           const motor = new Audio('/motor.mp3');
-          motor.preload = 'auto';
-          motor.volume = 1;
+          motor.preload = 'auto'; motor.volume = 1;
 
           let halfTimer = null;
           const halfPromise = new Promise((resolveHalf) => {
             motor.addEventListener('loadedmetadata', () => {
               const half = ((motor.duration || 2) / 2) * 1000;
-              halfTimer = setTimeout(() => {
-                new Audio('/freiada.mp3').play().catch(() => {});
-                resolveHalf(null);
-              }, half);
+              halfTimer = setTimeout(() => { new Audio('/freiada.mp3').play().catch(() => {}); resolveHalf(null); }, half);
             });
-            // fallback caso metadata não venha
             setTimeout(() => {
-              if (!halfTimer) {
-                new Audio('/freiada.mp3').play().catch(() => {});
-                resolveHalf(null);
-              }
+              if (!halfTimer) { new Audio('/freiada.mp3').play().catch(() => {}); resolveHalf(null); }
             }, 1200);
           });
 
@@ -229,70 +342,51 @@ export default function Painel() {
           clearTimeout(halfTimer);
           await halfPromise;
 
-          // 3) buzina final
           await playWithFallback('/busina.mp3', { timeoutMs: 2500 }).catch(() => {});
 
-          // 4) FALA via backend TTS
           const ajustarLetra = (letra) => {
             const mapa = { Q: 'quê', W: 'dáblio', Y: 'ípsilon', E: 'é' };
-            return mapa[letra.toUpperCase()] || letra.toUpperCase();
+            return mapa[letra?.toUpperCase()] || letra?.toUpperCase();
           };
           const placaSeparada = (carro.placa || '')
-            .toString()
-            .toUpperCase()
-            .split('')
-            .map(ajustarLetra)
-            .join(' ');
+            .toString().toUpperCase().split('').map(ajustarLetra).join(' ');
 
           const modeloCorrigido = corrigirPronunciaModelo(carro.modelo);
-          const frase = `Serviço finalizado, Carro ${modeloCorrigido}, placa ${placaSeparada}, cor ${carro.cor}, Carro ${modeloCorrigido}, placa ${placaSeparada}, cor ${carro.cor}, dirija-se ao caixa.   Obrigado pela preferência!`;
+          const frase = `Serviço finalizado, Carro ${modeloCorrigido}, placa ${placaSeparada}, cor ${carro.cor}, dirija-se ao caixa. Obrigado pela preferência!`;
 
-          // tenta tocar o MP3 gerado pelo backend
           const reason = await playUrl(`${API_BASE}/api/tts?text=${encodeURIComponent(frase)}`, {
-            volume: 1,
-            timeoutMs: 15000
+            volume: 1, timeoutMs: 15000
           });
 
           if (reason !== 'ended') {
-            // fallback 1: Web Speech (se existir)
             const ok = speak(frase);
-            if (!ok) {
-              // fallback 2: toque de atenção
-              await playWithFallback('/busina.mp3', { timeoutMs: 2000 }).catch(() => {});
-            }
+            if (!ok) await playWithFallback('/busina.mp3', { timeoutMs: 1500 }).catch(() => {});
           }
         } catch (e) {
           console.warn('Erro no fluxo de áudio:', e);
         }
       };
 
-      if (audioOK) tocarFluxo();
-      else {
-        // espera liberar e roda o fluxo uma única vez
+      if (audioOK) {
+        tocarFluxo();
+      } else {
         const watch = setInterval(() => {
-          if (audioOK) {
-            clearInterval(watch);
-            tocarFluxo();
-          }
+          if (audioOK) { clearInterval(watch); tocarFluxo(); }
         }, 250);
+        setTimeout(() => clearInterval(watch), 20000);
       }
 
-      // remove da fila e ajusta índice
-      setFila((prev) => {
-        const nova = prev.filter((c) => c.id !== carro.id);
-        setCarroAtual((idx) => (idx >= nova.length ? 0 : idx));
-        return nova;
-      });
-
-      // mantém o destaque por 30s e garante limpeza
       if (timeoutDestaqueRef.current) clearTimeout(timeoutDestaqueRef.current);
       timeoutDestaqueRef.current = setTimeout(() => {
         setCarroFinalizado(null);
         setEmDestaque(false);
-      }, 30000); // 30s
+      }, 30000);
     };
 
-    const onNovoCarroAdicionado = () => buscarFila();
+    const onNovoCarroAdicionado = () => {
+      buscarFila();
+      stopOverlay(true);
+    };
 
     socket.on('carroFinalizado', onCarroFinalizado);
     socket.on('novoCarroAdicionado', onNovoCarroAdicionado);
@@ -302,18 +396,19 @@ export default function Painel() {
       socket.off('novoCarroAdicionado', onNovoCarroAdicionado);
       if (timeoutDestaqueRef.current) clearTimeout(timeoutDestaqueRef.current);
     };
-  }, [audioOK]); // observa audioOK
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [audioOK]);
 
-  // 4) Guard extra
   useEffect(() => {
     if (!carroFinalizado && emDestaque) setEmDestaque(false);
   }, [carroFinalizado, emDestaque]);
 
   const carroDestaque = carroFinalizado || fila[carroAtual];
+  const overlayItems = useMemo(() => visibleNow(nowMS()), [playlist]);
 
   return (
     <div className="painel">
-      {/* OVERLAY DE PERMISSÃO PARA TV SAMSUNG */}
+      {/* OVERLAY DE PERMISSÃO */}
       {!audioOK && (
         <button
           ref={unlockBtnRef}
@@ -337,6 +432,7 @@ export default function Painel() {
         </button>
       )}
 
+      {/* TOPO */}
       <div className="topo">
         <div className="titulo" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <img src="/img/logo_pneuforte.png" alt="Pneu Forte" style={{ height: 65, objectFit: 'contain' }} />
@@ -346,6 +442,7 @@ export default function Painel() {
         </div>
       </div>
 
+      {/* CONTEÚDO PRINCIPAL */}
       <div className="conteudo">
         <div className={`principal ${emDestaque ? 'destaque-finalizado' : ''}`}>
           {carroDestaque ? (
@@ -366,9 +463,7 @@ export default function Painel() {
           ) : (
             <div className="conteudo-finalizado">
               <img src="/img/carro_pneu_forte.png" alt="Carro" className="imagem-principal" />
-              <div className="info-carro">
-                <h2>Sem carros na fila</h2>
-              </div>
+              <div className="info-carro"><h2>Sem carros na fila</h2></div>
             </div>
           )}
         </div>
@@ -389,6 +484,7 @@ export default function Painel() {
         </div>
       </div>
 
+      {/* RODAPÉ PARCEIROS */}
       <div className="parceiros">
         <div className="lista-parceiros">
           <div className="logos-scroll">
@@ -408,6 +504,21 @@ export default function Painel() {
           </div>
         </div>
       </div>
+
+      {/* OVERLAY DE MÍDIA */}
+      {overlayOn && overlayItems.length > 0 && (
+        <div className="media-overlay" onClick={() => stopOverlay(true)}>
+          {overlayItems[overlayIdx % overlayItems.length].tipo === 'VIDEO' ? (
+            <video ref={videoRef} className="media-el" />
+          ) : (
+            <img
+              className="media-el"
+              alt={overlayItems[overlayIdx % overlayItems.length].titulo || 'mídia'}
+              src={overlayItems[overlayIdx % overlayItems.length].src || `${API_BASE}${overlayItems[overlayIdx % overlayItems.length].url}`}
+            />
+          )}
+        </div>
+      )}
     </div>
   );
 }

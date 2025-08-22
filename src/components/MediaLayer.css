@@ -1,0 +1,15 @@
+.media-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;      /* acima de tudo no Painel */
+  background: #000;   /* tela preta por trás do vídeo/imagem */
+  display: none;
+}
+.media-layer.show { display: block; }
+
+.media-el {
+  width: 100%;
+  height: 100%;
+  object-fit: contain; /* preserva proporção; mude para "cover" se quiser preencher */
+  background: #000;
+}
