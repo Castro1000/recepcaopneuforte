@@ -1,588 +1,411 @@
-// src/pages/Painel.jsx
-import './Painel.css';
-import axios from 'axios';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { io } from 'socket.io-client';
+// src/pages/Midia.jsx
+import React, { useEffect, useRef, useState } from "react";
+import "./Midia.css";
 
-// ===== Ajuste conforme ambiente =====
-// const API_BASE = 'http://localhost:3001';
-const API_BASE = 'https://recepcaopneuforte.onrender.com';
+const DEFAULT_DURATION_MS = 8000;       // 8s
+const DEFAULT_SEQ_STEP_MS = 10000;      // 10s
 
-const socket = io(API_BASE);
+const PRESETS = [
+  { key: "local",  label: "Localhost (3001)",             url: "http://localhost:3001" },
+  { key: "render", label: "Hospedagem (Render)",          url: "https://recepcaopneuforte.onrender.com" },
+  { key: "same",   label: "Mesmo host do front (vazio)",  url: "" }, // usa o mesmo domínio do front
+];
+const CUSTOM_KEY = "__custom__";
 
-export default function Painel() {
-  // -------- Fila / destaque --------
-  const [fila, setFila] = useState([]);
-  const [carroAtual, setCarroAtual] = useState(0);
-  const [carroFinalizado, setCarroFinalizado] = useState(null);
-  const [emDestaque, setEmDestaque] = useState(false);
-
-  // Liberação de áudio
-  const [audioOK, setAudioOK] = useState(false);
-  const unlockBtnRef = useRef(null);
-
-  const intervaloRef = useRef(null);
-  const timeoutDestaqueRef = useRef(null);
-
-  // -------- Playlist / overlay --------
-  const [playlist, setPlaylist] = useState([]);
-  const [overlayOn, setOverlayOn] = useState(false);
-  const [overlayIdx, setOverlayIdx] = useState(0);
-  const [windowSec/*, setWindowSec*/] = useState(150); // janela de abertura do bloco
-  const videoRef = useRef(null);
-  const imgTimerRef = useRef(null);
-
-  // suprimir reabertura no mesmo bloco
-  const suppressUntilRef = useRef(0);
-  const overlayBlockEndRef = useRef(0);
-
-  const montaServicos = (c) =>
-    [c?.servico, c?.servico2, c?.servico3].filter(Boolean).join(' | ');
-  const nowMS = () => Date.now();
-
-  // ------- Buscar fila -------
-  const buscarFila = async () => {
-    try {
-      const { data } = await axios.get(`${API_BASE}/api/fila-servico`, { withCredentials: false });
-      if (Array.isArray(data)) setFila(data.slice(0, 7));
-      else console.error('A resposta da API /fila-servico não é um array:', data);
-    } catch (err) {
-      console.error('Erro ao buscar fila:', err);
+function pickInitialApiBase() {
+  try {
+    const u = new URL(window.location.href);
+    const qs = u.searchParams.get("api");
+    if (qs) {
+      if (qs === "local")  return "http://localhost:3001";
+      if (qs === "render") return "https://recepcaopneuforte.onrender.com";
+      if (qs === "same" || qs === "/") return "";
+      if (/^https?:\/\//i.test(qs)) return qs;
     }
+  } catch {}
+  const saved = localStorage.getItem("apiBase");
+  if (saved !== null) return saved;
+  if (location.hostname === "localhost" || location.hostname === "127.0.0.1")
+    return "http://localhost:3001";
+  return "https://recepcaopneuforte.onrender.com";
+}
+
+// utils
+const toInt = (v, d) => {
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : d;
+};
+const humanToMs = (value, unit) => {
+  const v = Number(value);
+  if (!Number.isFinite(v) || v <= 0) return DEFAULT_DURATION_MS;
+  return unit === "min" ? v * 60000 : v * 1000;
+};
+const msToHuman = (ms) => {
+  if (!Number.isFinite(ms)) return "";
+  if (ms < 1000) return `${ms} ms`;
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const rs = s % 60;
+  return rs ? `${m}m ${rs}s` : `${m}m`;
+};
+
+export default function Midia() {
+  // ----- seletor de backend -----
+  const [apiBase, setApiBase] = useState(pickInitialApiBase());
+  const [customUrl, setCustomUrl] = useState(() => localStorage.getItem("apiBaseCustom") || "");
+  const selectValue = PRESETS.some(p => p.url === apiBase) ? apiBase : CUSTOM_KEY;
+  useEffect(() => { localStorage.setItem("apiBase", apiBase); }, [apiBase]);
+
+  // token (só envia se existir para evitar preflight desnecessário)
+  const token = (localStorage.getItem("token") || "").trim();
+
+  // helpers de request
+  const makeUrl = (pathOrFull) => {
+    if (!pathOrFull) return "";
+    if (/^(https?:)?\/\//i.test(pathOrFull) || pathOrFull.startsWith("blob:") || pathOrFull.startsWith("data:")) {
+      return pathOrFull;
+    }
+    return `${apiBase}${pathOrFull}`;
   };
 
-  // ------- Normalização de mídia/playlist -------
-  const normalize = (arr) => {
-    return (arr || []).map((m) => {
-      const tipoRaw = String(m.tipo || '').toUpperCase();
-      return {
-        id: m.id,
-        url: m.url,                          // relativo (Painel prefixa com API_BASE)
-        src: m.src,                          // absoluto, se vier
-        tipo: tipoRaw,                       // "IMG" | "VIDEO"/"VID"
-        titulo: m.titulo || '',
-        data_inicio: m.data_inicio || null,
-        data_fim: m.data_fim || null,
-        intervalo_minutos: m.intervalo_minutos ?? 0,
-        image_duration_ms:
-          m.image_duration_ms ??
-          m.duracao_ms ??
-          (m.duracao_seg ? Number(m.duracao_seg) * 1000 : undefined),
-        ord: Number(m.ord ?? 0),
-        ativo: m.ativo == null ? 1 : Number(m.ativo),
-      };
-    });
-  };
+  async function apiAuth(path, opt = {}) {
+    const headers = opt.headers ? { ...opt.headers } : {};
+    // NUNCA setar Content-Type quando body é FormData
+    if (!(opt.body instanceof FormData)) headers["Content-Type"] = "application/json";
+    if (token) headers["Authorization"] = `Bearer ${token}`;
 
-  // ------- Buscar playlist pública (com fallback para /api/midia) -------
-  const fetchPlaylist = async () => {
     try {
-      // tenta playlist pública
-      const r = await fetch(`${API_BASE}/api/playlist`, { cache: 'no-store' });
-      let items = [];
-      if (r.ok) {
-        const j = await r.json();
-        items = Array.isArray(j) ? j : Array.isArray(j?.items) ? j.items : [];
+      const r = await fetch(makeUrl(path), { ...opt, headers, cache: "no-store" });
+      if (!r.ok) {
+        let detail = "";
+        try { detail = await r.text(); } catch {}
+        throw new Error(`${detail || "erro"} (HTTP ${r.status})`);
       }
-
-      // se não veio nada, cai para /api/midia
-      if (!Array.isArray(items) || items.length === 0) {
-        const r2 = await fetch(`${API_BASE}/api/midia`, { cache: 'no-store' });
-        if (!r2.ok) throw new Error(await r2.text());
-        const j2 = await r2.json();
-        setPlaylist(normalize(j2));
-        return;
-      }
-
-      setPlaylist(normalize(items));
+      try { return await r.json(); } catch { return {}; }
     } catch (e) {
-      console.warn('Falha ao buscar playlist:', e);
-      setPlaylist([]);
+      throw new Error(e.message || "Failed to fetch");
     }
-  };
+  }
 
-  // ------- Cargas iniciais -------
-  useEffect(() => {
-    buscarFila();
-    fetchPlaylist();
-  }, []);
+  // ----- estado -----
+  const [midias, setMidias] = useState([]);
+  const [msg, setMsg] = useState("");
+  const [err, setErr] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
 
-  // ------- Atualizações periódicas -------
-  useEffect(() => {
-    const t1 = setInterval(buscarFila, 30000);   // fila a cada 30s
-    const t2 = setInterval(fetchPlaylist, 15000); // playlist a cada 15s (↑)
-    return () => { clearInterval(t1); clearInterval(t2); };
-  }, []);
+  // ref do input de arquivo (para reset real)
+  const fileInputRef = useRef(null);
+  const [fileInputKey, setFileInputKey] = useState(0);
 
-  // ------- carrossel lateral (pausa com destaque) -------
-  useEffect(() => {
-    if (intervaloRef.current) clearInterval(intervaloRef.current);
-    if (fila.length > 1 && !carroFinalizado) {
-      intervaloRef.current = setInterval(() => {
-        setCarroAtual((prev) => (prev + 1) % fila.length);
-      }, 6000);
-    } else {
-      setCarroAtual(0);
-    }
-    return () => clearInterval(intervaloRef.current);
-  }, [fila, carroFinalizado]);
+  const [form, setForm] = useState({
+    titulo: "",
+    files: [],
+    data_inicio: "",
+    data_fim: "",
+    intervalo_minutos: 15,
+    durationValue: 8,
+    durationUnit: "s",
+    seq_step_sec: 10,
+  });
 
-  // ================== Liberação de áudio ==================
-  const unlockAudio = async () => {
+  // carregar lista
+  const carregarMidias = async () => {
+    setErr(""); setMsg("");
     try {
-      const a = new Audio('/motor.mp3');
-      a.volume = 0;
-      await a.play().catch(() => {});
-      a.pause(); a.currentTime = 0;
-      if ('speechSynthesis' in window) {
-        const u = new SpeechSynthesisUtterance(' ');
-        u.lang = 'pt-BR';
-        window.speechSynthesis.speak(u);
-      }
-      setAudioOK(true);
-    } catch { setAudioOK(true); }
-  };
-  useEffect(() => {
-    if (!audioOK) {
-      const t0 = Date.now();
-      const tick = () => {
-        if (audioOK) return;
-        unlockBtnRef.current?.focus();
-        if (Date.now() - t0 < 1000) requestAnimationFrame(tick);
-      };
-      tick();
-    }
-  }, [audioOK]);
-
-  useEffect(() => {
-    const onKey = (e) => {
-      const ok = e.key === 'Enter' || e.key === 'NumpadEnter' || e.key === ' ' || e.keyCode === 13 || e.keyCode === 32;
-      if (!audioOK && ok) { e.preventDefault(); unlockAudio(); }
-    };
-    document.addEventListener('keydown', onKey, true);
-    return () => document.removeEventListener('keydown', onKey, true);
-  }, [audioOK]);
-
-  // ================== Helpers de áudio/voz ==================
-  const corrigirPronunciaModelo = (modelo) => {
-    const m = (modelo || '').toString().trim();
-    const upper = m.toUpperCase();
-    switch (upper) {
-      case 'KWID': return 'cuidi';
-      case 'BYD': return 'biu ai di';
-      case 'HB20': return 'agá bê vinte';
-      case 'ONIX': return 'ônix';
-      case 'T-CROSS': return 'tê cross';
-      case 'HR-V': return 'agá érre vê';
-      case 'CR-V': return 'cê érre vê';
-      case 'FERRARI': return 'FÉRRARI';
-      case 'MOBI': return 'MÓBI';
-      default: return m;
+      const data = await apiAuth("/api/midia", { method: "GET" });
+      setMidias(Array.isArray(data) ? data : []);
+    } catch (e) {
+      console.error(e);
+      setErr("Não foi possível carregar a lista de mídias (verifique login/backend).");
+      setMidias([]);
     }
   };
+  useEffect(() => { carregarMidias(); /* eslint-disable-line */ }, []);
+  useEffect(() => { carregarMidias(); }, [apiBase]);
 
-  const speak = (texto) => {
-    if (!('speechSynthesis' in window)) return false;
+  // seleção de arquivos
+  const onFiles = (e) => {
+    const list = Array.from(e.target.files || []);
+    if (!list.length) return setForm(f => ({ ...f, files: [] }));
+    const firstVideo = list.find(f => f.type.startsWith("video/"));
+    if (firstVideo) return setForm(f => ({ ...f, files: [firstVideo] })); // só 1 vídeo
+    const imgs = list.filter(f => f.type.startsWith("image/"));
+    setForm(f => ({ ...f, files: imgs }));
+  };
+
+  const limparInputArquivo = () => {
+    if (fileInputRef.current) fileInputRef.current.value = "";
+    setFileInputKey(k => k + 1); // força recriar o input (reset)
+  };
+
+  // salvar
+  const salvar = async () => {
+    if (isSaving) return;
+    setErr(""); setMsg("");
+
+    if (!form.files.length) {
+      setErr("Selecione um vídeo ou imagens.");
+      return;
+    }
+    if (form.data_inicio && form.data_fim && new Date(form.data_inicio) > new Date(form.data_fim)) {
+      setErr("O início não pode ser depois do término.");
+      return;
+    }
+
+    const isVideo = form.files[0].type.startsWith("video/");
+    const image_duration_ms = humanToMs(form.durationValue, form.durationUnit);
+    const seq_enabled = !isVideo && form.files.length > 1;
+    const seq_step_ms = toInt(form.seq_step_sec * 1000, DEFAULT_SEQ_STEP_MS);
+    const intervaloMin = toInt(form.intervalo_minutos, 15);
+
     try {
-      const u = new SpeechSynthesisUtterance(texto);
-      u.lang = 'pt-BR'; u.rate = 1.0;
-      const voices = window.speechSynthesis.getVoices?.() || [];
-      const v = voices.find(v => v.lang?.toLowerCase().startsWith('pt')) || voices[0];
-      if (v) u.voice = v;
-      window.speechSynthesis.cancel();
-      window.speechSynthesis.speak(u);
-      return true;
-    } catch { return false; }
-  };
+      setIsSaving(true);
+      let okCount = 0;
 
-  const playUrl = (url, { volume = 1, timeoutMs = 15000 } = {}) =>
-    new Promise((resolve) => {
-      const a = new Audio();
-      a.preload = 'auto'; a.crossOrigin = 'anonymous'; a.volume = volume;
-      const sep = url.includes('?') ? '&' : '?';
-      a.src = `${url}${sep}_=${Date.now()}`;
-      let done = false;
-      const finish = (reason='ok') => { if (done) return; done = true; try{a.pause();}catch{} resolve(reason); };
-      a.addEventListener('canplay', () => a.play().catch(() => finish('blocked')));
-      a.addEventListener('ended', () => finish('ended'));
-      a.addEventListener('error', () => finish('error'));
-      a.load();
-      setTimeout(() => finish('timeout'), timeoutMs);
-    });
+      for (const file of form.files) {
+        const fd = new FormData();
+        fd.append("titulo", form.titulo || "");
+        fd.append("arquivo", file);
+        fd.append("data_inicio", form.data_inicio || "");
+        fd.append("data_fim", form.data_fim || "");
+        fd.append("intervalo_minutos", String(intervaloMin));
+        fd.append("image_duration_ms", String(image_duration_ms));
+        // dicas p/ backend (pode ignorar)
+        fd.append("seq_enabled", String(seq_enabled ? 1 : 0));
+        fd.append("seq_count", String(seq_enabled ? form.files.length : 1));
+        fd.append("seq_step_ms", String(seq_enabled ? seq_step_ms : 0));
 
-  const playWithFallback = (url, { volume = 1, timeoutMs = 7000 } = {}) =>
-    new Promise((resolve) => {
-      const a = new Audio(url);
-      a.preload = 'auto'; a.volume = volume;
-      let done = false;
-      const finish = (reason='ok') => { if (done) return; done = true; try{a.pause();}catch{} resolve(reason); };
-      a.addEventListener('ended', () => finish('ended'));
-      a.addEventListener('error', () => finish('error'));
-      a.play().catch(() => finish('blocked'));
-      setTimeout(() => finish('timeout'), timeoutMs);
-    });
+        // cache-bust no endpoint (evita cache/CDN)
+        const endpoint = `/api/midia?ts=${Date.now()}&uid=${Math.random().toString(36).slice(2)}`;
 
-  // ================== Agendamento / Overlay ==================
-  const parseMaybe = (s) => (s ? new Date(s).getTime() : null);
-  const inDateWindow = (item, t) => {
-    const ini = parseMaybe(item.data_inicio);
-    const fim = parseMaybe(item.data_fim);
-    if (ini && t < ini) return false;
-    if (fim && t > fim) return false;
-    return true;
-  };
-
-  // itens sem "ativo" são considerados ativos
-  const isActive = (x) => (x?.ativo == null ? 1 : Number(x.ativo)) === 1;
-
-  const visibleNow = (t) =>
-    (playlist || [])
-      .filter(isActive)
-      .filter((x) => inDateWindow(x, t))
-      .sort((a, b) => (a.ord ?? 0) - (b.ord ?? 0) || a.id - b.id);
-
-  const ivMs = (it) => Math.max(0, Number(it.intervalo_minutos || 0) * 60000);
-  const anchorMs = (it) => {
-    const ini = parseMaybe(it.data_inicio);
-    return Number.isFinite(ini) ? ini : 0; // sem início => ancora no relógio
-  };
-  const blockStart = (it, t) => {
-    const iv = ivMs(it);
-    if (iv <= 0) return t;
-    const base = anchorMs(it);
-    return Math.floor((t - base) / iv) * iv + base;
-  };
-
-  const inIntervalWindow = (it, t, wndSec) => {
-    const iv = ivMs(it);
-    if (iv <= 0) return true; // sem intervalo = sempre que estiver na janela de data
-    const bs = blockStart(it, t);
-    return t >= bs && (t - bs) < wndSec * 1000;
-  };
-
-  const mustOpenOverlayNow = (t) =>
-    visibleNow(t).some((it) => inIntervalWindow(it, t, windowSec));
-
-  useEffect(() => {
-    const tick = () => {
-      const t = nowMS();
-
-      // não reabrir durante supressão
-      if (t < suppressUntilRef.current) return;
-
-      if (carroFinalizado) {
-        if (overlayOn) stopOverlay(false);
-        return;
+        // IMPORTANTE: sem headers customizados (evita CORS no Render)
+        await apiAuth(endpoint, { method: "POST", body: fd });
+        okCount++;
       }
 
-      if (mustOpenOverlayNow(t)) {
-        if (!overlayOn) startOverlay(t);
-      } else {
-        if (overlayOn) stopOverlay(false);
-      }
-    };
-    const id = setInterval(tick, 500);
-    return () => clearInterval(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [playlist, carroFinalizado, windowSec, overlayOn]);
+      setMsg(isVideo
+        ? "Vídeo enviado com sucesso."
+        : okCount > 1
+          ? `Imagens enviadas: ${okCount}.`
+          : "Imagem enviada com sucesso."
+      );
 
-  const startOverlay = (tStart) => {
-    const items = visibleNow(tStart);
-    if (!items.length) return;
-
-    setOverlayIdx(0);
-    setOverlayOn(true);
-
-    // calcula fim do bloco atual para suprimir reabertura até lá
-    const ref = items[0];
-    const iv = ivMs(ref);
-    if (iv > 0) {
-      const bs = blockStart(ref, tStart);
-      overlayBlockEndRef.current = bs + iv;
-    } else {
-      overlayBlockEndRef.current = tStart + windowSec * 1000;
-    }
-  };
-
-  // stopOverlay(closeAndSuppress=true): se terminar por fim do media, suprime até o fim do bloco
-  const stopOverlay = (closeAndSuppress = true) => {
-    setOverlayOn(false);
-    if (imgTimerRef.current) { clearTimeout(imgTimerRef.current); imgTimerRef.current = null; }
-    try {
-      const v = videoRef.current;
-      if (v) { v.pause(); v.removeAttribute('src'); v.load(); }
-    } catch {}
-    if (closeAndSuppress) {
-      suppressUntilRef.current = Math.max(suppressUntilRef.current, overlayBlockEndRef.current || 0);
-    }
-  };
-
-  const isVideoKind = (x) => String(x?.tipo || '').toUpperCase().startsWith('VID');
-
-  // toca um item e fecha o overlay ao final
-  useEffect(() => {
-    if (!overlayOn) return;
-    const items = visibleNow(nowMS());
-    if (!items.length) return;
-
-    const current = items[overlayIdx % items.length];
-
-    if (imgTimerRef.current) { clearTimeout(imgTimerRef.current); imgTimerRef.current = null; }
-
-    const mediaSrc = current.src || `${API_BASE}${current.url}`;
-
-    if (isVideoKind(current)) {
-      const v = videoRef.current;
-      if (!v) return;
-      v.muted = true;
-      v.playsInline = true;
-      v.autoplay = true;
-      v.preload = 'auto';
-      v.src = mediaSrc;
-
-      v.onended = () => stopOverlay(true);
-      v.onerror = () => stopOverlay(true);
-      v.onloadeddata = () => { v.play().catch(() => stopOverlay(true)); };
-
-      // fallback: se nada tocar em 8s, fecha
-      const failTimer = setTimeout(() => stopOverlay(true), 8000);
-      v.onplaying = () => clearTimeout(failTimer);
-    } else {
-      // duração: image_duration_ms > duracao_ms > duracao_seg*1000 > 10s
-      const durMs =
-        Number(current.image_duration_ms) ||
-        Number(current.duracao_ms) ||
-        (Number(current.duracao_seg || 10) * 1000);
-
-      const ms = Math.max(3000, durMs || 10000);
-      imgTimerRef.current = setTimeout(() => stopOverlay(true), ms);
-    }
-
-    return () => {
-      if (imgTimerRef.current) { clearTimeout(imgTimerRef.current); imgTimerRef.current = null; }
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [overlayOn, overlayIdx]);
-
-  // ================== Sockets (finalização + novo carro) ==================
-  useEffect(() => {
-    const onCarroFinalizado = async (carro) => {
-      stopOverlay(true); // interrompe overlay e suprime reabertura
-
-      setCarroFinalizado(carro);
-      setEmDestaque(true);
-
-      setFila((prev) => {
-        const nova = prev.filter((c) => c.id !== carro.id);
-        setCarroAtual((idx) => (idx >= nova.length ? 0 : idx));
-        return nova;
+      // resetar form
+      setForm({
+        titulo: "",
+        files: [],
+        data_inicio: "",
+        data_fim: "",
+        intervalo_minutos: 15,
+        durationValue: 8,
+        durationUnit: "s",
+        seq_step_sec: 10,
       });
+      limparInputArquivo();
+      await carregarMidias();
+    } catch (e) {
+      console.error(e);
+      setErr(`Falha ao salvar: ${e.message}`);
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
-      const tocarFluxo = async () => {
-        try {
-          await playWithFallback('/busina.mp3', { timeoutMs: 2000 }).catch(() => {});
-          const motor = new Audio('/motor.mp3');
-          motor.preload = 'auto'; motor.volume = 1;
+  // excluir
+  const excluir = async (id) => {
+    setErr(""); setMsg("");
+    try {
+      await apiAuth(`/api/midia/${id}`, { method: "DELETE" });
+      setMsg("Mídia removida.");
+      carregarMidias();
+    } catch (e) {
+      console.error(e);
+      setErr("Erro ao excluir.");
+    }
+  };
 
-          let halfTimer = null;
-          const halfPromise = new Promise((resolveHalf) => {
-            motor.addEventListener('loadedmetadata', () => {
-              const half = ((motor.duration || 2) / 2) * 1000;
-              halfTimer = setTimeout(() => { new Audio('/freiada.mp3').play().catch(() => {}); resolveHalf(null); }, half);
-            });
-            setTimeout(() => {
-              if (!halfTimer) { new Audio('/freiada.mp3').play().catch(() => {}); resolveHalf(null); }
-            }, 1200);
-          });
+  const resolveUrl = (u) => makeUrl(u);
 
-          const endPromise = new Promise((resolveEnd) => {
-            motor.addEventListener('ended', () => resolveEnd(null));
-            motor.addEventListener('error', () => resolveEnd(null));
-            setTimeout(() => resolveEnd(null), 4000);
-          });
-
-          motor.play().catch(() => {});
-          await Promise.race([endPromise]);
-          clearTimeout(halfTimer);
-          await halfPromise;
-
-          await playWithFallback('/busina.mp3', { timeoutMs: 2500 }).catch(() => {});
-
-          const ajustarLetra = (letra) => {
-            const mapa = { Q: 'quê', W: 'dáblio', Y: 'ípsilon', E: 'é' };
-            return mapa[letra?.toUpperCase()] || letra?.toUpperCase();
-          };
-          const placaSeparada = (carro.placa || '')
-            .toString().toUpperCase().split('').map(ajustarLetra).join(' ');
-
-          const modeloCorrigido = corrigirPronunciaModelo(carro.modelo);
-          const frase = `Serviço finalizado, Carro ${modeloCorrigido}, placa ${placaSeparada}, cor ${carro.cor}, dirija-se ao caixa. Obrigado pela preferência!`;
-
-          const reason = await playUrl(`${API_BASE}/api/tts?text=${encodeURIComponent(frase)}`, {
-            volume: 1, timeoutMs: 15000
-          });
-
-          if (reason !== 'ended') {
-            const ok = speak(frase);
-            if (!ok) await playWithFallback('/busina.mp3', { timeoutMs: 1500 }).catch(() => {});
-          }
-        } catch (e) {
-          console.warn('Erro no fluxo de áudio:', e);
-        }
-      };
-
-      if (audioOK) {
-        tocarFluxo();
-      } else {
-        const watch = setInterval(() => {
-          if (audioOK) { clearInterval(watch); tocarFluxo(); }
-        }, 250);
-        setTimeout(() => clearInterval(watch), 20000);
-      }
-
-      if (timeoutDestaqueRef.current) clearTimeout(timeoutDestaqueRef.current);
-      timeoutDestaqueRef.current = setTimeout(() => {
-        setCarroFinalizado(null);
-        setEmDestaque(false);
-      }, 30000);
-    };
-
-    const onNovoCarroAdicionado = () => {
-      buscarFila();
-      stopOverlay(true);
-    };
-
-    socket.on('carroFinalizado', onCarroFinalizado);
-    socket.on('novoCarroAdicionado', onNovoCarroAdicionado);
-
-    return () => {
-      socket.off('carroFinalizado', onCarroFinalizado);
-      socket.off('novoCarroAdicionado', onNovoCarroAdicionado);
-      if (timeoutDestaqueRef.current) clearTimeout(timeoutDestaqueRef.current);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [audioOK]);
-
-  useEffect(() => {
-    if (!carroFinalizado && emDestaque) setEmDestaque(false);
-  }, [carroFinalizado, emDestaque]);
-
-  const carroDestaque = carroFinalizado || fila[carroAtual];
-  const overlayItems = useMemo(() => visibleNow(nowMS()), [playlist]);
+  const isMultiImage = form.files.length > 1 && form.files.every(f => f.type.startsWith("image/"));
+  const isVideoSel = form.files.length === 1 && form.files[0]?.type.startsWith("video/");
+  const tempoMs = humanToMs(form.durationValue, form.durationUnit);
 
   return (
-    <div className="painel">
-      {/* OVERLAY DE PERMISSÃO */}
-      {!audioOK && (
-        <button
-          ref={unlockBtnRef}
-          autoFocus
-          onClick={unlockAudio}
-          onKeyDown={(e) => {
-            const ok = e.key === 'Enter' || e.key === 'NumpadEnter' || e.key === ' ' || e.keyCode === 13 || e.keyCode === 32;
-            if (ok) { e.preventDefault(); unlockAudio(); }
-          }}
-          style={{
-            position: 'fixed', inset: 0, zIndex: 99999, background: 'rgba(0,0,0,0.85)',
-            color: '#0ff', fontSize: '3rem', fontWeight: 800, textShadow: '0 0 10px #0ff',
-            border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center',
-            flexDirection: 'column', gap: 8, padding: 20, cursor: 'pointer'
-          }}
-        >
-          <div>Pressione <u>OK</u> no controle</div>
-          <div style={{ fontSize: '1.4rem', color: '#9ff' }}>
-            para habilitar o áudio e a voz das chamadas
-          </div>
-        </button>
-      )}
+    <div className="midia-container">
+      <h2>Gerenciar Mídias</h2>
 
-      {/* TOPO */}
-      <div className="topo">
-        <div className="titulo" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <img src="/img/logo_pneuforte.png" alt="Pneu Forte" style={{ height: 65, objectFit: 'contain' }} />
-        </div>
-        <div className="previsao" style={{ fontSize: '3rem', fontWeight: 800, letterSpacing: '15px', textTransform: 'uppercase', textShadow: '0 0 10px cyan' }}>
-          LISTA DE ESPERA
-        </div>
-      </div>
+      {/* seletor de backend */}
+      <div className="backend-picker">
+        <label>Backend</label>
+        <div className="backend-line">
+          <select
+            value={selectValue}
+            onChange={(e) => {
+              const v = e.target.value;
+              if (v === CUSTOM_KEY) {
+                setApiBase(customUrl || "");
+              } else {
+                setApiBase(v);
+              }
+            }}
+          >
+            {PRESETS.map(p => (
+              <option key={p.key} value={p.url}>{p.label}</option>
+            ))}
+            <option value={CUSTOM_KEY}>Personalizado…</option>
+          </select>
 
-      {/* CONTEÚDO PRINCIPAL */}
-      <div className="conteudo">
-        <div className={`principal ${emDestaque ? 'destaque-finalizado' : ''}`}>
-          {carroDestaque ? (
-            <div className="conteudo-finalizado">
-              <img
-                src={carroFinalizado ? '/img/finalizado.gif' : '/img/carro_pneu_forte.png'}
-                alt="Carro"
-                className="imagem-principal"
-              />
-              <div className="info-carro">
-                {carroFinalizado && <div className="texto-finalizado">🚗 CARRO FINALIZADO ✅</div>}
-                <h2>{carroDestaque.modelo?.toUpperCase()}</h2>
-                <p>🔖 Placa: {carroDestaque.placa}</p>
-                <p>🎨 Cor: {carroDestaque.cor}</p>
-                <p>🔧 Serviços: {montaServicos(carroDestaque) || '-'}</p>
-              </div>
-            </div>
-          ) : (
-            <div className="conteudo-finalizado">
-              <img src="/img/carro_pneu_forte.png" alt="Carro" className="imagem-principal" />
-              <div className="info-carro"><h2>Sem carros na fila</h2></div>
-            </div>
-          )}
-        </div>
-
-        <div className="lista-lateral">
-          {fila.map((carro, index) =>
-            index !== carroAtual ? (
-              <div key={carro.id} className="card-lateral">
-                <img src="/img/carro_pneu_forte.png" alt="Carro" className="miniatura" />
-                <div>
-                  <h3> 🚘 {carro.modelo?.toUpperCase()} 🚘</h3>
-                  <p> 🔖 Placa: {carro.placa}</p>
-                  <p> 🔧 Serviços: {montaServicos(carro) || '-'}</p>
-                </div>
-              </div>
-            ) : null
-          )}
-        </div>
-      </div>
-
-      {/* RODAPÉ PARCEIROS */}
-      <div className="parceiros">
-        <div className="lista-parceiros">
-          <div className="logos-scroll">
-            {[...Array(2)].flatMap((_, i) => [
-              <img key={`p1-${i}`} src="/img/logo_parceiro1.png" alt="Parceiro 1" className="logo-parceiro" />,
-              <img key={`p2-${i}`} src="/img/logo_parceiro2.png" alt="Parceiro 2" className="logo-parceiro" />,
-              <img key={`p3-${i}`} src="/img/logo_parceiro3.png" alt="Parceiro 3" className="logo-parceiro" />,
-              <img key={`p4-${i}`} src="/img/logo_parceiro4.png" alt="Parceiro 4" className="logo-parceiro" />,
-              <img key={`p5-${i}`} src="/img/logo_parceiro5.png" alt="Parceiro 5" className="logo-parceiro" />,
-              <img key={`p6-${i}`} src="/img/logo_parceiro6.png" alt="Parceiro 6" className="logo-parceiro" />,
-              <img key={`p7-${i}`} src="/img/logo_parceiro7.png" alt="Parceiro 7" className="logo-parceiro" />,
-              <img key={`p8-${i}`} src="/img/logo_parceiro8.png" alt="Parceiro 8" className="logo-parceiro" />,
-              <img key={`p9-${i}`} src="/img/logo_parceiro9.jpg" alt="Parceiro 9" className="logo-parceiro" />,
-              <img key={`p10-${i}`} src="/img/logo_parceiro10.png" alt="Parceiro 10" className="logo-parceiro" />,
-              <img key={`p11-${i}`} src="/img/logo_parceiro11.jpg" alt="Parceiro 11" className="logo-parceiro" />,
-            ])}
-          </div>
-        </div>
-      </div>
-
-      {/* OVERLAY DE MÍDIA */}
-      {overlayOn && overlayItems.length > 0 && (
-        <div className="media-overlay" onClick={() => stopOverlay(true)}>
-          {isVideoKind(overlayItems[overlayIdx % overlayItems.length]) ? (
-            <video ref={videoRef} className="media-el" />
-          ) : (
-            <img
-              className="media-el"
-              alt={overlayItems[overlayIdx % overlayItems.length].titulo || 'mídia'}
-              src={overlayItems[overlayIdx % overlayItems.length].src || `${API_BASE}${overlayItems[overlayIdx % overlayItems.length].url}`}
+          {selectValue === CUSTOM_KEY && (
+            <input
+              type="text"
+              placeholder="https://seu-backend.com"
+              value={customUrl}
+              onChange={(e) => {
+                const v = e.target.value.trim();
+                setCustomUrl(v);
+                localStorage.setItem("apiBaseCustom", v);
+                setApiBase(v);
+              }}
             />
           )}
         </div>
-      )}
+        <div className="muted using">Usando: {apiBase || "(mesmo host do front)"}.</div>
+      </div>
+
+      {/* formulário */}
+      <div className="midia-form">
+        <div className="row">
+          <input
+            type="text"
+            placeholder="Título"
+            value={form.titulo}
+            onChange={(e) => setForm({ ...form, titulo: e.target.value })}
+          />
+
+          <div className="field">
+            <label>Arquivo (vídeo ou imagens — pode selecionar várias imagens)</label>
+            <input
+              key={fileInputKey}
+              ref={fileInputRef}
+              type="file"
+              accept="image/*,video/*"
+              multiple
+              onChange={onFiles}
+            />
+            {form.files.length > 0 && (
+              <div className="muted tiny">
+                {isVideoSel ? `1 vídeo selecionado` : `${form.files.length} imagem(ns) selecionada(s)`}
+              </div>
+            )}
+          </div>
+
+          <div className="grid-2">
+            <div className="field">
+              <label>Início</label>
+              <input
+                type="datetime-local"
+                value={form.data_inicio}
+                onChange={(e) => setForm({ ...form, data_inicio: e.target.value })}
+              />
+            </div>
+            <div className="field">
+              <label>Término</label>
+              <input
+                type="datetime-local"
+                value={form.data_fim}
+                onChange={(e) => setForm({ ...form, data_fim: e.target.value })}
+              />
+            </div>
+          </div>
+
+          <div className="field">
+            <label>Mostrar novamente a cada (min)</label>
+            <input
+              type="number"
+              min="1"
+              value={form.intervalo_minutos}
+              onChange={(e) => setForm({ ...form, intervalo_minutos: toInt(e.target.value, 15) })}
+            />
+          </div>
+
+          <div className="grid-2">
+            <div className="field">
+              <label>Tempo na tela</label>
+              <div className="inline">
+                <input
+                  type="number"
+                  min="1"
+                  value={form.durationValue}
+                  onChange={(e) => setForm({ ...form, durationValue: toInt(e.target.value, 8) })}
+                />
+                <select
+                  value={form.durationUnit}
+                  onChange={(e) => setForm({ ...form, durationUnit: e.target.value })}
+                >
+                  <option value="s">segundos</option>
+                  <option value="min">minutos</option>
+                </select>
+              </div>
+              <div className="muted tiny">= {msToHuman(tempoMs)}</div>
+            </div>
+
+            <div className="field">
+              <label>Transição entre imagens (padrão 10s)</label>
+              <input
+                type="number"
+                min="0"
+                value={form.seq_step_sec}
+                onChange={(e) => setForm({ ...form, seq_step_sec: toInt(e.target.value, 10) })}
+                disabled={!isMultiImage}
+              />
+              {!isMultiImage && <div className="muted tiny">Ativo ao selecionar 2+ imagens</div>}
+            </div>
+          </div>
+
+          <button className="btn primary" onClick={salvar} disabled={isSaving}>
+            {isSaving ? "Enviando..." : "Salvar"}
+          </button>
+
+          {!!msg && <div className="ok">{msg}</div>}
+          {!!err && <div className="error">{err}</div>}
+        </div>
+      </div>
+
+      {/* lista */}
+      <h3>Mídias Cadastradas</h3>
+      <ul className="midia-lista">
+        {midias.map((m) => (
+          <li key={m.id}>
+            <div className="item-grid">
+              <div>
+                <strong>{m.titulo || "(sem título)"}</strong>
+                <div className="muted meta">
+                  {(m.tipo === "IMG" ? "Imagem" : "Vídeo")} · fica {msToHuman(Number(m.image_duration_ms) || DEFAULT_DURATION_MS)} na tela
+                  {m.intervalo_minutos != null ? ` · Intervalo: ${m.intervalo_minutos} min` : ""}
+                </div>
+                {(m.data_inicio || m.data_fim) && (
+                  <div className="muted meta">
+                    {m.data_inicio ? `Início: ${new Date(m.data_inicio).toLocaleString()}` : ""}
+                    {m.data_inicio && m.data_fim ? " · " : ""}
+                    {m.data_fim ? `Término: ${new Date(m.data_fim).toLocaleString()}` : ""}
+                  </div>
+                )}
+                <div className="preview">
+                  {m.tipo === "IMG"
+                    ? <img src={resolveUrl(m.url)} alt={m.titulo || "img"} />
+                    : <video src={resolveUrl(m.url)} muted controls />
+                  }
+                </div>
+              </div>
+              <div className="right-actions">
+                <button className="btn danger" onClick={() => excluir(m.id)}>Excluir</button>
+              </div>
+            </div>
+          </li>
+        ))}
+        {!midias.length && <li className="muted empty">Sem itens</li>}
+      </ul>
     </div>
   );
 }
