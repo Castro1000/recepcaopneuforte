@@ -28,13 +28,16 @@ export default function Painel() {
   const [playlist, setPlaylist] = useState([]);
   const [overlayOn, setOverlayOn] = useState(false);
   const [overlayIdx, setOverlayIdx] = useState(0);
-  const [windowSec/*, setWindowSec*/] = useState(150); // janela de abertura do bloco
+  const [windowSec/*, setWindowSec*/] = useState(240); // janela de abertura do bloco (↑)
   const videoRef = useRef(null);
   const imgTimerRef = useRef(null);
 
   // suprimir reabertura no mesmo bloco
   const suppressUntilRef = useRef(0);
   const overlayBlockEndRef = useRef(0);
+
+  const TOKEN = (localStorage.getItem('token') || '').trim();
+  const authHeaders = TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {};
 
   const montaServicos = (c) =>
     [c?.servico, c?.servico2, c?.servico3].filter(Boolean).join(' | ');
@@ -51,15 +54,22 @@ export default function Painel() {
     }
   };
 
+  // ------- Helpers de fetch JSON com token -------
+  const fetchJson = async (path) => {
+    const r = await fetch(`${API_BASE}${path}`, { cache: 'no-store', headers: authHeaders });
+    if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+    return r.json();
+  };
+
   // ------- Normalização de mídia/playlist -------
   const normalize = (arr) => {
     return (arr || []).map((m) => {
       const tipoRaw = String(m.tipo || '').toUpperCase();
       return {
         id: m.id,
-        url: m.url,                          // relativo (Painel prefixa com API_BASE)
-        src: m.src,                          // absoluto, se vier
-        tipo: tipoRaw,                       // "IMG" | "VIDEO"/"VID"
+        url: m.url,
+        src: m.src,
+        tipo: tipoRaw,                       // "IMG" | "VIDEO"
         titulo: m.titulo || '',
         data_inicio: m.data_inicio || null,
         data_fim: m.data_fim || null,
@@ -74,24 +84,20 @@ export default function Painel() {
     });
   };
 
-  // ------- Buscar playlist pública (com fallback para /api/midia) -------
+  // ------- Buscar playlist (com fallback para /api/midia) -------
   const fetchPlaylist = async () => {
     try {
-      // tenta playlist pública
-      const r = await fetch(`${API_BASE}/api/playlist`, { cache: 'no-store' });
       let items = [];
-      if (r.ok) {
-        const j = await r.json();
+      try {
+        const j = await fetchJson('/api/playlist'); // pode exigir token em prod
         items = Array.isArray(j) ? j : Array.isArray(j?.items) ? j.items : [];
+      } catch (e) {
+        console.warn('playlist falhou:', e?.message || e);
       }
 
-      // se não veio nada, cai para /api/midia
       if (!Array.isArray(items) || items.length === 0) {
-        const r2 = await fetch(`${API_BASE}/api/midia`, { cache: 'no-store' });
-        if (!r2.ok) throw new Error(await r2.text());
-        const j2 = await r2.json();
-        setPlaylist(normalize(j2));
-        return;
+        const j2 = await fetchJson('/api/midia');   // fallback autenticado
+        items = Array.isArray(j2) ? j2 : [];
       }
 
       setPlaylist(normalize(items));
@@ -110,7 +116,7 @@ export default function Painel() {
   // ------- Atualizações periódicas -------
   useEffect(() => {
     const t1 = setInterval(buscarFila, 30000);   // fila a cada 30s
-    const t2 = setInterval(fetchPlaylist, 15000); // playlist a cada 15s (↑)
+    const t2 = setInterval(fetchPlaylist, 20000); // playlist a cada 20s
     return () => { clearInterval(t1); clearInterval(t2); };
   }, []);
 
@@ -329,7 +335,8 @@ export default function Painel() {
 
     if (imgTimerRef.current) { clearTimeout(imgTimerRef.current); imgTimerRef.current = null; }
 
-    const mediaSrc = current.src || `${API_BASE}${current.url}`;
+    const src = current.src || `${API_BASE}${current.url}`;
+    const mediaSrc = src + (src.includes('?') ? '&' : '?') + '_=' + Date.now(); // cache-buster
 
     if (isVideoKind(current)) {
       const v = videoRef.current;
@@ -338,6 +345,7 @@ export default function Painel() {
       v.playsInline = true;
       v.autoplay = true;
       v.preload = 'auto';
+      v.crossOrigin = 'anonymous';
       v.src = mediaSrc;
 
       v.onended = () => stopOverlay(true);
@@ -348,7 +356,6 @@ export default function Painel() {
       const failTimer = setTimeout(() => stopOverlay(true), 8000);
       v.onplaying = () => clearTimeout(failTimer);
     } else {
-      // duração: image_duration_ms > duracao_ms > duracao_seg*1000 > 10s
       const durMs =
         Number(current.image_duration_ms) ||
         Number(current.duracao_ms) ||
@@ -578,7 +585,12 @@ export default function Painel() {
             <img
               className="media-el"
               alt={overlayItems[overlayIdx % overlayItems.length].titulo || 'mídia'}
-              src={overlayItems[overlayIdx % overlayItems.length].src || `${API_BASE}${overlayItems[overlayIdx % overlayItems.length].url}`}
+              src={
+                (overlayItems[overlayIdx % overlayItems.length].src ||
+                 `${API_BASE}${overlayItems[overlayIdx % overlayItems.length].url}`) +
+                ((overlayItems[overlayIdx % overlayItems.length].src || `${API_BASE}${overlayItems[overlayIdx % overlayItems.length].url}`).includes('?') ? '&' : '?') +
+                '_=' + Date.now()
+              }
             />
           )}
         </div>
