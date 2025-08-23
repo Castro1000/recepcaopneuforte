@@ -57,7 +57,7 @@ export default function Midia() {
   const selectValue = PRESETS.some(p => p.url === apiBase) ? apiBase : CUSTOM_KEY;
   useEffect(() => { localStorage.setItem("apiBase", apiBase); }, [apiBase]);
 
-  // token (só envia se existir para evitar preflight desnecessário)
+  // token (só envia se existir e não for Render)
   const token = (localStorage.getItem("token") || "").trim();
 
   // helpers de request
@@ -69,14 +69,43 @@ export default function Midia() {
     return `${apiBase}${pathOrFull}`;
   };
 
+  const getApiEnv = () => {
+    try {
+      const base = apiBase || window.location.origin;
+      const u = new URL(base);
+      const host = u.host || "";
+      return {
+        sameOrigin: !apiBase,                    // apiBase == '' => mesmo host do front
+        isRender: /onrender\.com$/i.test(host),  // heurística p/ evitar preflight
+        host,
+      };
+    } catch {
+      return { sameOrigin: false, isRender: false, host: "" };
+    }
+  };
+
   async function apiAuth(path, opt = {}) {
+    const { sameOrigin, isRender } = getApiEnv();
     const headers = opt.headers ? { ...opt.headers } : {};
-    // NUNCA setar Content-Type quando body é FormData
-    if (!(opt.body instanceof FormData)) headers["Content-Type"] = "application/json";
-    if (token) headers["Authorization"] = `Bearer ${token}`;
+
+    // Só coloca Content-Type se EXISTIR body JSON (e não for FormData)
+    const hasJsonBody = opt.body && !(opt.body instanceof FormData);
+    if (hasJsonBody) headers["Content-Type"] = "application/json";
+
+    // Evita Authorization no Render (reduz preflight). No localhost mantém.
+    const shouldSendAuth = !!token && !isRender && !sameOrigin;
+    if (shouldSendAuth) headers["Authorization"] = `Bearer ${token}`;
+
+    const fetchOpts = {
+      ...opt,
+      headers,
+      cache: "no-store",
+      // cookies só se mesmo host (não dispara preflight)
+      credentials: sameOrigin ? "include" : "omit",
+    };
 
     try {
-      const r = await fetch(makeUrl(path), { ...opt, headers, cache: "no-store" });
+      const r = await fetch(makeUrl(path), fetchOpts);
       if (!r.ok) {
         let detail = "";
         try { detail = await r.text(); } catch {}
@@ -84,7 +113,11 @@ export default function Midia() {
       }
       try { return await r.json(); } catch { return {}; }
     } catch (e) {
-      throw new Error(e.message || "Failed to fetch");
+      // trata erro de CORS de forma mais clara
+      if (String(e?.message || "").includes("Failed to fetch")) {
+        throw new Error("Falha de rede/CORS ao acessar o backend.");
+      }
+      throw e;
     }
   }
 
