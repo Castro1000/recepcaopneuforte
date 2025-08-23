@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
 
 // ajuste aqui conforme ambiente
-//const API_BASE = 'http://localhost:3001';
+// const API_BASE = 'http://localhost:3001';
 const API_BASE = 'https://recepcaopneuforte.onrender.com';
 
 const socket = io(API_BASE);
@@ -28,7 +28,7 @@ export default function Painel() {
   const [playlist, setPlaylist] = useState([]);
   const [overlayOn, setOverlayOn] = useState(false);
   const [overlayIdx, setOverlayIdx] = useState(0);
-  const [windowSec, setWindowSec] = useState(90); // janela que considera o "bloco" do intervalo
+  const [windowSec, setWindowSec] = useState(150); // janela de abertura do bloco (↑)
   const videoRef = useRef(null);
   const imgTimerRef = useRef(null);
 
@@ -74,7 +74,7 @@ export default function Painel() {
   // ------- Atualizações periódicas -------
   useEffect(() => {
     const t1 = setInterval(buscarFila, 30000);   // fila a cada 30s
-    const t2 = setInterval(fetchPlaylist, 60000); // playlist a cada 60s
+    const t2 = setInterval(fetchPlaylist, 15000); // playlist mais frequente (15s)
     return () => { clearInterval(t1); clearInterval(t2); };
   }, []);
 
@@ -197,19 +197,30 @@ export default function Painel() {
     return true;
   };
 
+  // trata "ativo" ausente como ativo
+  const isActive = (x) => (x?.ativo == null ? 1 : Number(x.ativo)) === 1;
+
   const visibleNow = (t) =>
     (playlist || [])
-      .filter((x) => Number(x.ativo) === 1)
+      .filter(isActive)
       .filter((x) => inDateWindow(x, t))
       .sort((a, b) => (a.ord ?? 0) - (b.ord ?? 0) || a.id - b.id);
 
+  // ancora o bloco no data_inicio (se houver); senão, no relógio (múltiplos de iv)
+  const inIntervalWindow = (it, t, wndSec) => {
+    const ivMin = Number(it.intervalo_minutos || 0);
+    if (ivMin <= 0) return true; // sem intervalo = sempre que estiver na janela de data
+    const ivMs = ivMin * 60000;
+
+    const ini = parseMaybe(it.data_inicio);
+    const base = Number.isFinite(ini) ? ini : 0; // ancora no início, se tiver
+
+    const block = Math.floor((t - base) / ivMs) * ivMs + base;
+    return t >= block && t - block < wndSec * 1000;
+  };
+
   const mustOpenOverlayNow = (t) =>
-    visibleNow(t).some((it) => {
-      const iv = Number(it.intervalo_minutos || 0);
-      if (iv <= 0) return true; // sem intervalo
-      const block = Math.floor(t / (iv * 60000)) * iv * 60000;
-      return t - block < windowSec * 1000;
-    });
+    visibleNow(t).some((it) => inIntervalWindow(it, t, windowSec));
 
   useEffect(() => {
     const tick = () => {
@@ -222,6 +233,7 @@ export default function Painel() {
         if (overlayOn) stopOverlay(false);
         return;
       }
+
       if (mustOpenOverlayNow(t)) {
         if (!overlayOn) startOverlay(t);
       } else {
@@ -238,12 +250,9 @@ export default function Painel() {
     if (!items.length) return;
     setOverlayIdx(0);
     setOverlayOn(true);
-
-    // define fim do bloco atual para suprimir reabertura até lá
-    overlayBlockEndRef.current = tStart + windowSec * 1000;
+    overlayBlockEndRef.current = tStart + windowSec * 1000; // fim do bloco corrente
   };
 
-  // stopOverlay(closeAndSuppress=true): se terminar por fim do media, suprime reabrir até o fim do bloco
   const stopOverlay = (closeAndSuppress = true) => {
     setOverlayOn(false);
     if (imgTimerRef.current) { clearTimeout(imgTimerRef.current); imgTimerRef.current = null; }
@@ -252,24 +261,24 @@ export default function Painel() {
       if (v) { v.pause(); v.removeAttribute('src'); v.load(); }
     } catch {}
     if (closeAndSuppress) {
-      // evita reabrir de novo no mesmo bloco
       suppressUntilRef.current = Math.max(suppressUntilRef.current, overlayBlockEndRef.current || 0);
     }
   };
 
-  // roda um item e fecha o overlay imediatamente ao final
+  const isVideoKind = (x) => String(x?.tipo || '').toUpperCase().startsWith('VID');
+
+  // roda um item e fecha o overlay ao final
   useEffect(() => {
     if (!overlayOn) return;
     const items = visibleNow(nowMS());
     if (!items.length) return;
 
     const current = items[overlayIdx % items.length];
-
     if (imgTimerRef.current) { clearTimeout(imgTimerRef.current); imgTimerRef.current = null; }
 
     const mediaSrc = current.src || `${API_BASE}${current.url}`;
 
-    if (current.tipo === 'VIDEO') {
+    if (isVideoKind(current)) {
       const v = videoRef.current;
       if (!v) return;
       v.muted = true;
@@ -278,20 +287,21 @@ export default function Painel() {
       v.preload = 'auto';
       v.src = mediaSrc;
 
-      // Fecha assim que terminar (sem esperar nada)
       v.onended = () => stopOverlay(true);
       v.onerror = () => stopOverlay(true);
+      v.onloadeddata = () => { v.play().catch(() => stopOverlay(true)); };
 
-      v.onloadeddata = () => {
-        // começa a tocar assim que carregar
-        v.play().catch(() => stopOverlay(true));
-      };
-      // fallback: se nada tocar em 5s, fecha
-      const failTimer = setTimeout(() => stopOverlay(true), 5000);
+      const failTimer = setTimeout(() => stopOverlay(true), 8000);
       v.onplaying = () => clearTimeout(failTimer);
     } else {
-      const dur = Math.max(3, Number(current.duracao_seg || 10));
-      imgTimerRef.current = setTimeout(() => stopOverlay(true), dur * 1000);
+      // usa image_duration_ms se existir; senão duracao_seg; senão 10s
+      const durMs =
+        Number(current.image_duration_ms) ||
+        (Number(current.duracao_ms) || 0) ||
+        (Number(current.duracao_seg || 10) * 1000);
+
+      const ms = Math.max(3000, durMs || 10000);
+      imgTimerRef.current = setTimeout(() => stopOverlay(true), ms);
     }
 
     return () => {
@@ -508,7 +518,7 @@ export default function Painel() {
       {/* OVERLAY DE MÍDIA */}
       {overlayOn && overlayItems.length > 0 && (
         <div className="media-overlay" onClick={() => stopOverlay(true)}>
-          {overlayItems[overlayIdx % overlayItems.length].tipo === 'VIDEO' ? (
+          {isVideoKind(overlayItems[overlayIdx % overlayItems.length]) ? (
             <video ref={videoRef} className="media-el" />
           ) : (
             <img
