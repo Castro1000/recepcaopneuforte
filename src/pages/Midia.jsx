@@ -56,7 +56,8 @@ export default function Midia() {
   const selectValue = PRESETS.some(p => p.url === apiBase) ? apiBase : CUSTOM_KEY;
   useEffect(() => { localStorage.setItem("apiBase", apiBase); }, [apiBase]);
 
-  const token = localStorage.getItem("token") || "";
+  const token = (localStorage.getItem("token") || "").trim();
+
   const makeUrl = (pathOrFull) => {
     if (!pathOrFull) return "";
     if (/^(https?:)?\/\//i.test(pathOrFull) || pathOrFull.startsWith("blob:") || pathOrFull.startsWith("data:")) {
@@ -64,17 +65,26 @@ export default function Midia() {
     }
     return `${apiBase}${pathOrFull}`;
   };
+
   async function apiAuth(path, opt = {}) {
     const headers = opt.headers ? { ...opt.headers } : {};
+    // Só seta Content-Type se NÃO for FormData
     if (!(opt.body instanceof FormData)) headers["Content-Type"] = "application/json";
-    headers["Authorization"] = `Bearer ${token}`;
-    const r = await fetch(makeUrl(path), { ...opt, headers, cache: "no-store" });
-    if (!r.ok) {
-      let detail = "";
-      try { detail = await r.text(); } catch {}
-      throw new Error(`${detail || "erro"} (HTTP ${r.status})`);
+    // Só envia Authorization se realmente houver token
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+
+    try {
+      const r = await fetch(makeUrl(path), { ...opt, headers, cache: "no-store" });
+      if (!r.ok) {
+        let detail = "";
+        try { detail = await r.text(); } catch {}
+        throw new Error(`${detail || "erro"} (HTTP ${r.status})`);
+      }
+      try { return await r.json(); } catch { return {}; }
+    } catch (e) {
+      // network/CORS/preflight cai aqui
+      throw new Error(e.message || "Failed to fetch");
     }
-    try { return await r.json(); } catch { return {}; }
   }
 
   // estado
@@ -129,6 +139,7 @@ export default function Midia() {
   const salvar = async () => {
     if (isSaving) return;
     setErr(""); setMsg("");
+
     if (!form.files.length) {
       setErr("Selecione um vídeo ou imagens.");
       return;
@@ -147,6 +158,7 @@ export default function Midia() {
     try {
       setIsSaving(true);
       let okCount = 0;
+
       for (const file of form.files) {
         const fd = new FormData();
         fd.append("titulo", form.titulo || "");
@@ -155,17 +167,14 @@ export default function Midia() {
         fd.append("data_fim", form.data_fim || "");
         fd.append("intervalo_minutos", String(intervaloMin));
         fd.append("image_duration_ms", String(image_duration_ms));
+        // dica de sequência (backend pode ignorar)
         fd.append("seq_enabled", String(seq_enabled ? 1 : 0));
         fd.append("seq_count", String(seq_enabled ? form.files.length : 1));
         fd.append("seq_step_ms", String(seq_enabled ? seq_step_ms : 0));
 
-        // cache-bust no localhost
+        // cache-bust no endpoint (evita caches/rotas agressivas)
         const endpoint = `/api/midia?ts=${Date.now()}&uid=${Math.random().toString(36).slice(2)}`;
-        await apiAuth(endpoint, {
-          method: "POST",
-          body: fd,
-          headers: { "X-Upload-Id": String(Date.now()) }
-        });
+        await apiAuth(endpoint, { method: "POST", body: fd });
         okCount++;
       }
 
