@@ -57,7 +57,7 @@ export default function Midia() {
   const selectValue = PRESETS.some(p => p.url === apiBase) ? apiBase : CUSTOM_KEY;
   useEffect(() => { localStorage.setItem("apiBase", apiBase); }, [apiBase]);
 
-  // token (só envia se existir e não for Render)
+  // token (precisa existir no MESMO domínio do front atual)
   const token = (localStorage.getItem("token") || "").trim();
 
   // helpers de request
@@ -69,56 +69,35 @@ export default function Midia() {
     return `${apiBase}${pathOrFull}`;
   };
 
-  const getApiEnv = () => {
-    try {
-      const base = apiBase || window.location.origin;
-      const u = new URL(base);
-      const host = u.host || "";
-      return {
-        sameOrigin: !apiBase,                    // apiBase == '' => mesmo host do front
-        isRender: /onrender\.com$/i.test(host),  // heurística p/ evitar preflight
-        host,
-      };
-    } catch {
-      return { sameOrigin: false, isRender: false, host: "" };
-    }
-  };
-
   async function apiAuth(path, opt = {}) {
-    const { sameOrigin, isRender } = getApiEnv();
     const headers = opt.headers ? { ...opt.headers } : {};
 
     // Só coloca Content-Type se EXISTIR body JSON (e não for FormData)
     const hasJsonBody = opt.body && !(opt.body instanceof FormData);
     if (hasJsonBody) headers["Content-Type"] = "application/json";
 
-    // Evita Authorization no Render (reduz preflight). No localhost mantém.
-    const shouldSendAuth = !!token && !isRender && !sameOrigin;
-    if (shouldSendAuth) headers["Authorization"] = `Bearer ${token}`;
+    // Sempre envia Authorization se tivermos token
+    if (token) headers["Authorization"] = `Bearer ${token}`;
 
     const fetchOpts = {
       ...opt,
       headers,
       cache: "no-store",
-      // cookies só se mesmo host (não dispara preflight)
-      credentials: sameOrigin ? "include" : "omit",
+      // cookies só se mesmo host (não precisa em Render)
+      credentials: apiBase ? "omit" : "include",
     };
 
-    try {
-      const r = await fetch(makeUrl(path), fetchOpts);
-      if (!r.ok) {
-        let detail = "";
-        try { detail = await r.text(); } catch {}
-        throw new Error(`${detail || "erro"} (HTTP ${r.status})`);
+    const resp = await fetch(makeUrl(path), fetchOpts);
+    if (!resp.ok) {
+      let detail = "";
+      try { detail = await resp.text(); } catch {}
+      // mensagens mais claras
+      if (resp.status === 401) {
+        throw new Error("token_required: faça login neste domínio para obter o token.");
       }
-      try { return await r.json(); } catch { return {}; }
-    } catch (e) {
-      // trata erro de CORS de forma mais clara
-      if (String(e?.message || "").includes("Failed to fetch")) {
-        throw new Error("Falha de rede/CORS ao acessar o backend.");
-      }
-      throw e;
+      throw new Error(`${detail || "erro"} (HTTP ${resp.status})`);
     }
+    try { return await resp.json(); } catch { return {}; }
   }
 
   // ----- estado -----
@@ -150,7 +129,9 @@ export default function Midia() {
       setMidias(Array.isArray(data) ? data : []);
     } catch (e) {
       console.error(e);
-      setErr("Não foi possível carregar a lista de mídias (verifique login/backend).");
+      setErr(e.message.includes("token_required")
+        ? "Não foi possível carregar a lista de mídias: faça login neste domínio."
+        : "Não foi possível carregar a lista de mídias (verifique login/backend).");
       setMidias([]);
     }
   };
@@ -185,6 +166,10 @@ export default function Midia() {
       setErr("O início não pode ser depois do término.");
       return;
     }
+    if (!token) {
+      setErr("É necessário estar logado neste domínio (token ausente).");
+      return;
+    }
 
     const isVideo = form.files[0].type.startsWith("video/");
     const image_duration_ms = humanToMs(form.durationValue, form.durationUnit);
@@ -212,7 +197,6 @@ export default function Midia() {
         // cache-bust no endpoint (evita cache/CDN)
         const endpoint = `/api/midia?ts=${Date.now()}&uid=${Math.random().toString(36).slice(2)}`;
 
-        // IMPORTANTE: sem headers customizados (evita CORS no Render)
         await apiAuth(endpoint, { method: "POST", body: fd });
         okCount++;
       }
@@ -254,7 +238,9 @@ export default function Midia() {
       carregarMidias();
     } catch (e) {
       console.error(e);
-      setErr("Erro ao excluir.");
+      setErr(e.message.includes("token_required")
+        ? "Erro ao excluir: faça login neste domínio."
+        : "Erro ao excluir.");
     }
   };
 
@@ -303,7 +289,12 @@ export default function Midia() {
             />
           )}
         </div>
-        <div className="muted using">Usando: {apiBase || "(mesmo host do front)"}.</div>
+        <div className="muted using">
+          Usando: {apiBase || "(mesmo host do front)"}.
+          <span style={{ marginLeft: 8, opacity: .8 }}>
+            {token ? "✅ logado" : "⚠️ sem login neste domínio"}
+          </span>
+        </div>
       </div>
 
       {/* formulário */}
