@@ -6,8 +6,9 @@ import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
 import './Admin.css';
 import BotaoSair from "../components/BotaoSair";
 
-//const API_BASE = 'http://localhost:3001';
 const API_BASE = 'https://recepcaopneuforte.onrender.com';
+//const API_BASE = 'http://localhost:3001';
+
 
 /* =========================
    Ícone SVG (engrenagem)

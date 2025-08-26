@@ -1,10 +1,9 @@
-// src/pages/Midia.jsx
 import React, { useEffect, useRef, useState } from "react";
 import "./Midia.css";
 
 // ===== Ajuste conforme ambiente =====
-//const API_BASE = "http://localhost:3001";
 const API_BASE = "https://recepcaopneuforte.onrender.com";
+// const API_BASE = "http://localhost:3001";
 
 const DEFAULT_DURATION_MS = 8000;   // 8s
 const DEFAULT_SEQ_STEP_MS = 10000;  // 10s
@@ -30,6 +29,12 @@ const msToHuman = (ms) => {
 };
 
 export default function Midia() {
+  // captura ?token=... (útil no Render para gravar o token no domínio correto)
+  useEffect(() => {
+    const t = new URLSearchParams(window.location.search).get("token");
+    if (t) localStorage.setItem("token", t);
+  }, []);
+
   // token salvo pelo login (mesmo domínio do front em uso)
   const token = (localStorage.getItem("token") || "").trim();
 
@@ -45,7 +50,6 @@ export default function Midia() {
   // --- fetch com auth ---
   async function apiAuth(path, opt = {}) {
     const headers = opt.headers ? { ...opt.headers } : {};
-    // só define Content-Type se NÃO for FormData
     if (opt.body && !(opt.body instanceof FormData)) headers["Content-Type"] = "application/json";
     if (token) headers["Authorization"] = `Bearer ${token}`;
 
@@ -164,9 +168,7 @@ export default function Midia() {
         fd.append("seq_count", String(seq_enabled ? form.files.length : 1));
         fd.append("seq_step_ms", String(seq_enabled ? seq_step_ms : 0));
 
-        // cache-buster no endpoint
         const endpoint = `/api/midia?ts=${Date.now()}&uid=${Math.random().toString(36).slice(2)}`;
-
         await apiAuth(endpoint, { method: "POST", body: fd });
         okCount++;
       }
