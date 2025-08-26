@@ -29,13 +29,12 @@ const msToHuman = (ms) => {
 };
 
 export default function Midia() {
-  // captura ?token=... (útil no Render para gravar o token no domínio correto)
+  // grava ?token=... no localStorage (útil no Render)
   useEffect(() => {
     const t = new URLSearchParams(window.location.search).get("token");
     if (t) localStorage.setItem("token", t);
   }, []);
 
-  // token salvo pelo login (mesmo domínio do front em uso)
   const token = (localStorage.getItem("token") || "").trim();
 
   // --- helper de URL ---

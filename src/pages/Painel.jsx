@@ -1,4 +1,3 @@
-// src/pages/Painel.jsx
 import './Painel.css';
 import axios from 'axios';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -11,17 +10,11 @@ const API_BASE = 'https://recepcaopneuforte.onrender.com';
 const socket = io(API_BASE);
 
 export default function Painel() {
-  // -------- token (precisa ser reativo!) --------
-  const [token, setToken] = useState(() => (localStorage.getItem('token') || '').trim());
+  // grava ?token=... no localStorage (útil no Render)
   useEffect(() => {
     const t = new URLSearchParams(window.location.search).get('token');
-    if (t) {
-      localStorage.setItem('token', t);
-      setToken(t);            // <- MUITO IMPORTANTE
-      console.debug('[Painel] token recebido via URL');
-    }
+    if (t) localStorage.setItem('token', t);
   }, []);
-  const authHeaders = useMemo(() => (token ? { Authorization: `Bearer ${token}` } : {}), [token]);
 
   // -------- Fila / destaque --------
   const [fila, setFila] = useState([]);
@@ -48,6 +41,12 @@ export default function Painel() {
   const suppressUntilRef = useRef(0);
   const overlayBlockEndRef = useRef(0);
 
+  // headers sempre com o token mais recente
+  const getAuthHeaders = () => {
+    const TOKEN = (localStorage.getItem('token') || '').trim();
+    return TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {};
+  };
+
   const montaServicos = (c) =>
     [c?.servico, c?.servico2, c?.servico3].filter(Boolean).join(' | ');
   const nowMS = () => Date.now();
@@ -65,11 +64,8 @@ export default function Painel() {
 
   // ------- Helpers de fetch JSON com token -------
   const fetchJson = async (path) => {
-    const r = await fetch(`${API_BASE}${path}`, { cache: 'no-store', headers: authHeaders });
-    if (!r.ok) {
-      const text = await r.text().catch(() => '');
-      throw new Error(`${r.status} ${text || r.statusText}`);
-    }
+    const r = await fetch(`${API_BASE}${path}`, { cache: 'no-store', headers: getAuthHeaders() });
+    if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
     return r.json();
   };
 
@@ -79,9 +75,9 @@ export default function Painel() {
       const tipoRaw = String(m.tipo || '').toUpperCase();
       return {
         id: m.id,
-        url: m.url,                // relativo (ex.: /uploads/xyz.mp4)
-        src: m.src,                // absoluto, se vier
-        tipo: tipoRaw,             // "IMG" | "VIDEO" | "VID"
+        url: m.url,
+        src: m.src,
+        tipo: tipoRaw,                       // "IMG" | "VIDEO"
         titulo: m.titulo || '',
         data_inicio: m.data_inicio || null,
         data_fim: m.data_fim || null,
@@ -96,43 +92,41 @@ export default function Painel() {
     });
   };
 
-  // ------- Buscar playlist (tenta /playlist, cai para /midia) -------
+  // ------- Buscar playlist (com fallback para /api/midia) -------
   const fetchPlaylist = async () => {
     try {
       let items = [];
       try {
-        const j = await fetchJson('/api/playlist');       // pode requerer token
+        const j = await fetchJson('/api/playlist'); // se precisar, usa token
         items = Array.isArray(j) ? j : Array.isArray(j?.items) ? j.items : [];
       } catch (e) {
-        console.warn('[Painel] /api/playlist falhou:', e?.message || e);
+        console.warn('playlist falhou:', e?.message || e);
       }
 
       if (!Array.isArray(items) || items.length === 0) {
-        const j2 = await fetchJson('/api/midia');         // fallback autenticado
+        const j2 = await fetchJson('/api/midia');   // fallback autenticado
         items = Array.isArray(j2) ? j2 : [];
       }
 
-      const norm = normalize(items);
-      console.debug('[Painel] playlist carregada:', norm);
-      setPlaylist(norm);
+      setPlaylist(normalize(items));
     } catch (e) {
-      console.warn('[Painel] Falha ao buscar playlist:', e);
+      console.warn('Falha ao buscar playlist:', e);
       setPlaylist([]);
     }
   };
 
-  // ------- Cargas iniciais / recarrega quando token muda -------
+  // ------- Cargas iniciais -------
   useEffect(() => {
     buscarFila();
-    fetchPlaylist();       // <- roda de novo quando token muda
-  }, [token]);             // <- dependência CRÍTICA
+    fetchPlaylist();
+  }, []);
 
   // ------- Atualizações periódicas -------
   useEffect(() => {
     const t1 = setInterval(buscarFila, 30000);
     const t2 = setInterval(fetchPlaylist, 20000);
     return () => { clearInterval(t1); clearInterval(t2); };
-  }, [token]);            // se trocar token, recria timers com headers novos
+  }, []);
 
   // ------- carrossel lateral -------
   useEffect(() => {
@@ -192,6 +186,7 @@ export default function Painel() {
     if (fim && t > fim) return false;
     return true;
   };
+
   const isActive = (x) => (x?.ativo == null ? 1 : Number(x.ativo)) === 1;
 
   const visibleNow = (t) =>
@@ -211,12 +206,14 @@ export default function Painel() {
     const base = anchorMs(it);
     return Math.floor((t - base) / iv) * iv + base;
   };
+
   const inIntervalWindow = (it, t, wndSec) => {
     const iv = ivMs(it);
     if (iv <= 0) return true;
     const bs = blockStart(it, t);
     return t >= bs && (t - bs) < wndSec * 1000;
   };
+
   const mustOpenOverlayNow = (t) =>
     visibleNow(t).some((it) => inIntervalWindow(it, t, windowSec));
 
@@ -272,6 +269,12 @@ export default function Painel() {
 
   const isVideoKind = (x) => String(x?.tipo || '').toUpperCase().startsWith('VID');
 
+  // helper: src da imagem com cache-buster (corrige erro do build)
+  const getImgSrc = (it) => {
+    const base = it.src || `${API_BASE}${it.url}`;
+    return base + (base.includes('?') ? '&' : '?') + '_=' + Date.now();
+  };
+
   useEffect(() => {
     if (!overlayOn) return;
     const items = visibleNow(nowMS());
@@ -281,8 +284,8 @@ export default function Painel() {
 
     if (imgTimerRef.current) { clearTimeout(imgTimerRef.current); imgTimerRef.current = null; }
 
-    const base = current.src || `${API_BASE}${current.url}`;
-    const mediaSrc = base + (base.includes('?') ? '&' : '?') + '_=' + Date.now();
+    const src = current.src || `${API_BASE}${current.url}`;
+    const mediaSrc = src + (src.includes('?') ? '&' : '?') + '_=' + Date.now();
 
     if (isVideoKind(current)) {
       const v = videoRef.current;
@@ -330,7 +333,7 @@ export default function Painel() {
         return nova;
       });
 
-      // (fluxo de áudio opcional aqui)
+      // (se quiser, aqui entra o fluxo de áudio/TTS)
     };
 
     const onNovoCarroAdicionado = () => {
@@ -456,7 +459,7 @@ export default function Painel() {
       </div>
 
       {/* OVERLAY DE MÍDIA */}
-      {overlayOn && (overlayItems.length > 0) && (
+      {overlayOn && overlayItems.length > 0 && (
         <div className="media-overlay" onClick={() => stopOverlay(true)}>
           {isVideoKind(overlayItems[overlayIdx % overlayItems.length]) ? (
             <video ref={videoRef} className="media-el" />
@@ -464,11 +467,7 @@ export default function Painel() {
             <img
               className="media-el"
               alt={overlayItems[overlayIdx % overlayItems.length].titulo || 'mídia'}
-              src={() => {
-                const it = overlayItems[overlayIdx % overlayItems.length];
-                const base = it.src || `${API_BASE}${it.url}`;
-                return base + (base.includes('?') ? '&' : '?') + '_=' + Date.now();
-              }()}
+              src={getImgSrc(overlayItems[overlayIdx % overlayItems.length])}
             />
           )}
         </div>
