@@ -1,3 +1,4 @@
+// src/pages/Painel.jsx
 import './Painel.css';
 import axios from 'axios';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -10,7 +11,7 @@ const API_BASE = 'https://recepcaopneuforte.onrender.com';
 const socket = io(API_BASE);
 
 export default function Painel() {
-  // grava ?token=... no localStorage (útil no Render)
+  // grava ?token=... (útil no Render)
   useEffect(() => {
     const t = new URLSearchParams(window.location.search).get('token');
     if (t) localStorage.setItem('token', t);
@@ -41,12 +42,8 @@ export default function Painel() {
   const suppressUntilRef = useRef(0);
   const overlayBlockEndRef = useRef(0);
 
-  // headers sempre com o token mais recente
-  const getAuthHeaders = () => {
-    const TOKEN = (localStorage.getItem('token') || '').trim();
-    return TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {};
-  };
-  const getToken = () => (localStorage.getItem('token') || '').trim();
+  const TOKEN = (localStorage.getItem('token') || '').trim();
+  const authHeaders = TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {};
 
   const montaServicos = (c) =>
     [c?.servico, c?.servico2, c?.servico3].filter(Boolean).join(' | ');
@@ -65,7 +62,7 @@ export default function Painel() {
 
   // ------- Helpers de fetch JSON com token -------
   const fetchJson = async (path) => {
-    const r = await fetch(`${API_BASE}${path}`, { cache: 'no-store', headers: getAuthHeaders() });
+    const r = await fetch(`${API_BASE}${path}`, { cache: 'no-store', headers: authHeaders });
     if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
     return r.json();
   };
@@ -76,9 +73,9 @@ export default function Painel() {
       const tipoRaw = String(m.tipo || '').toUpperCase();
       return {
         id: m.id,
-        url: m.url,
-        src: m.src,
-        tipo: tipoRaw,                       // "IMG" | "VIDEO"
+        url: m.url,      // relativo
+        src: m.src,      // absoluto (se vier)
+        tipo: tipoRaw,   // "IMG" | "VIDEO" | "VID"
         titulo: m.titulo || '',
         data_inicio: m.data_inicio || null,
         data_fim: m.data_fim || null,
@@ -142,21 +139,38 @@ export default function Painel() {
     return () => clearInterval(intervaloRef.current);
   }, [fila, carroFinalizado]);
 
-  // ================== Liberação de áudio (click/OK) ==================
+  // ================== Liberação de áudio ==================
   const unlockAudio = async () => {
     try {
+      // 1) "ping" de áudio silencioso (destrava políticas)
       const a = new Audio('/motor.mp3');
       a.volume = 0;
       await a.play().catch(() => {});
       a.pause(); a.currentTime = 0;
+
+      // 2) fala vazia (alguns browsers liberam synthesis junto)
       if ('speechSynthesis' in window) {
         const u = new SpeechSynthesisUtterance(' ');
         u.lang = 'pt-BR';
         window.speechSynthesis.speak(u);
       }
+
       setAudioOK(true);
-    } catch { setAudioOK(true); }
+
+      // 3) Pré-aquecer um <video> com gesture do usuário
+      try {
+        const vv = document.createElement('video');
+        vv.muted = true;
+        vv.playsInline = true;
+        vv.autoplay = true;
+        vv.src = ''; // não toca de fato, mas registra o gesture
+        vv.play().catch(() => {});
+      } catch {}
+    } catch {
+      setAudioOK(true);
+    }
   };
+
   useEffect(() => {
     if (!audioOK) {
       const t0 = Date.now();
@@ -177,67 +191,6 @@ export default function Painel() {
     document.addEventListener('keydown', onKey, true);
     return () => document.removeEventListener('keydown', onKey, true);
   }, [audioOK]);
-
-  // ================== Helpers de áudio/voz ==================
-  const corrigirPronunciaModelo = (modelo) => {
-    const m = (modelo || '').toString().trim();
-    const upper = m.toUpperCase();
-    switch (upper) {
-      case 'KWID': return 'cuidi';
-      case 'BYD': return 'biu ai di';
-      case 'HB20': return 'agá bê vinte';
-      case 'ONIX': return 'ônix';
-      case 'T-CROSS': return 'tê cross';
-      case 'HR-V': return 'agá érre vê';
-      case 'CR-V': return 'cê érre vê';
-      case 'FERRARI': return 'FÉRRARI';
-      case 'MOBI': return 'MÓBI';
-      default: return m;
-    }
-  };
-
-  const speak = (texto) => {
-    if (!('speechSynthesis' in window)) return false;
-    try {
-      const u = new SpeechSynthesisUtterance(texto);
-      u.lang = 'pt-BR'; u.rate = 1.0;
-      const voices = window.speechSynthesis.getVoices?.() || [];
-      const v = voices.find(v => v.lang?.toLowerCase().startsWith('pt')) || voices[0];
-      if (v) u.voice = v;
-      window.speechSynthesis.cancel();
-      window.speechSynthesis.speak(u);
-      return true;
-    } catch { return false; }
-  };
-
-  const playUrl = (url, { volume = 1, timeoutMs = 15000 } = {}) =>
-    new Promise((resolve) => {
-      const a = new Audio();
-      a.preload = 'auto';
-      a.crossOrigin = 'anonymous';
-      a.volume = volume;
-      const sep = url.includes('?') ? '&' : '?';
-      a.src = `${url}${sep}_=${Date.now()}`;
-      let done = false;
-      const finish = (reason='ok') => { if (done) return; done = true; try{a.pause();}catch{} resolve(reason); };
-      a.addEventListener('canplay', () => a.play().catch(() => finish('blocked')));
-      a.addEventListener('ended', () => finish('ended'));
-      a.addEventListener('error', () => finish('error'));
-      a.load();
-      setTimeout(() => finish('timeout'), timeoutMs);
-    });
-
-  const playWithFallback = (url, { volume = 1, timeoutMs = 7000 } = {}) =>
-    new Promise((resolve) => {
-      const a = new Audio(url);
-      a.preload = 'auto'; a.volume = volume;
-      let done = false;
-      const finish = (reason='ok') => { if (done) return; done = true; try{a.pause();}catch{} resolve(reason); };
-      a.addEventListener('ended', () => finish('ended'));
-      a.addEventListener('error', () => finish('error'));
-      a.play().catch(() => finish('blocked'));
-      setTimeout(() => finish('timeout'), timeoutMs);
-    });
 
   // ================== Agendamento / Overlay ==================
   const parseMaybe = (s) => (s ? new Date(s).getTime() : null);
@@ -331,13 +284,7 @@ export default function Painel() {
 
   const isVideoKind = (x) => String(x?.tipo || '').toUpperCase().startsWith('VID');
 
-  // helper: src da imagem com cache-buster
-  const getImgSrc = (it) => {
-    const base = it.src || `${API_BASE}${it.url}`;
-    return base + (base.includes('?') ? '&' : '?') + '_=' + Date.now();
-    // (sem IIFE aqui — compatível com o build do Vite)
-  };
-
+  // toca um item e fecha o overlay ao final (com autoplay seguro + unmute se audioOK)
   useEffect(() => {
     if (!overlayOn) return;
     const items = visibleNow(nowMS());
@@ -347,26 +294,73 @@ export default function Painel() {
 
     if (imgTimerRef.current) { clearTimeout(imgTimerRef.current); imgTimerRef.current = null; }
 
-    const src = current.src || `${API_BASE}${current.url}`;
-    const mediaSrc = src + (src.includes('?') ? '&' : '?') + '_=' + Date.now();
+    const baseSrc = current.src || `${API_BASE}${current.url}`;
+    const mediaSrc = baseSrc + (baseSrc.includes('?') ? '&' : '?') + '_=' + Date.now();
 
     if (isVideoKind(current)) {
       const v = videoRef.current;
       if (!v) return;
-      v.muted = true;
+
+      // Configuração segura p/ 1ª reprodução (autoplay destrava em muted)
       v.playsInline = true;
       v.autoplay = true;
       v.preload = 'auto';
       v.crossOrigin = 'anonymous';
+      v.muted = true;
+      v.volume = 0;
       v.src = mediaSrc;
 
-      v.onended = () => stopOverlay(true);
-      v.onerror = () => stopOverlay(true);
-      v.onloadeddata = () => { v.play().catch(() => stopOverlay(true)); };
+      let retried = false;
+      const failTimer = setTimeout(() => stopOverlay(true), 10000);
 
-      const failTimer = setTimeout(() => stopOverlay(true), 8000);
+      const cleanup = () => {
+        clearTimeout(failTimer);
+        v.onended = null;
+        v.onerror = null;
+        v.onplaying = null;
+        v.onstalled = null;
+        v.oncanplay = null;
+        v.onloadeddata = null;
+      };
+
+      v.onended = () => { cleanup(); stopOverlay(true); };
+      v.onerror = () => {
+        if (!retried) {
+          retried = true;
+          try { v.load(); v.play().catch(() => stopOverlay(true)); } catch {}
+        } else {
+          cleanup(); stopOverlay(true);
+        }
+      };
+
+      const tryPlay = async () => {
+        try {
+          await v.play(); // 1ª tentativa (muted) — deve renderizar frame e evitar tela preta
+          if (audioOK) {
+            const unmute = () => {
+              v.muted = false;
+              v.volume = 1;
+              v.removeEventListener('playing', unmute);
+            };
+            v.addEventListener('playing', unmute);
+          }
+        } catch {
+          // Última tentativa: se áudio já liberado, desmutar e tentar novamente
+          if (audioOK && !retried) {
+            retried = true;
+            v.muted = false;
+            v.volume = 1;
+            try { await v.play(); } catch {}
+          }
+        }
+      };
+
+      v.oncanplay = tryPlay;
+      v.onloadeddata = tryPlay;
       v.onplaying = () => clearTimeout(failTimer);
+      v.onstalled = () => { try { v.load(); v.play().catch(() => {}); } catch {} };
     } else {
+      // imagem
       const durMs =
         Number(current.image_duration_ms) ||
         Number(current.duracao_ms) ||
@@ -379,13 +373,13 @@ export default function Painel() {
     return () => {
       if (imgTimerRef.current) { clearTimeout(imgTimerRef.current); imgTimerRef.current = null; }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [overlayOn, overlayIdx]);
+    // 👇 inclui audioOK: se o usuário liberar o som, os próximos vídeos já saem com áudio
+  }, [overlayOn, overlayIdx, audioOK]);
 
   // ================== Sockets (finalização + novo carro) ==================
   useEffect(() => {
     const onCarroFinalizado = async (carro) => {
-      stopOverlay(true); // interrompe overlay e suprime reabertura
+      stopOverlay(true);
 
       setCarroFinalizado(carro);
       setEmDestaque(true);
@@ -396,84 +390,7 @@ export default function Painel() {
         return nova;
       });
 
-      // --- FLUXO DE ÁUDIO / TTS ---
-      const tocarFluxo = async () => {
-        try {
-          // 1) buzina
-          await playWithFallback('/busina.mp3', { timeoutMs: 2000 }).catch(() => {});
-
-          // 2) motor + freio no meio
-          const motor = new Audio('/motor.mp3');
-          motor.preload = 'auto'; motor.volume = 1;
-
-          let halfTimer = null;
-          const halfPromise = new Promise((resolveHalf) => {
-            motor.addEventListener('loadedmetadata', () => {
-              const half = ((motor.duration || 2) / 2) * 1000;
-              halfTimer = setTimeout(() => { new Audio('/freiada.mp3').play().catch(() => {}); resolveHalf(null); }, half);
-            });
-            // fallback: se metadata não vier
-            setTimeout(() => {
-              if (!halfTimer) { new Audio('/freiada.mp3').play().catch(() => {}); resolveHalf(null); }
-            }, 1200);
-          });
-
-          const endPromise = new Promise((resolveEnd) => {
-            motor.addEventListener('ended', () => resolveEnd(null));
-            motor.addEventListener('error', () => resolveEnd(null));
-            setTimeout(() => resolveEnd(null), 4000);
-          });
-
-          motor.play().catch(() => {});
-          await Promise.race([endPromise]);
-          clearTimeout(halfTimer);
-          await halfPromise;
-
-          // 3) buzina de novo
-          await playWithFallback('/busina.mp3', { timeoutMs: 2500 }).catch(() => {});
-
-          // 4) TTS (com fallback para speechSynthesis)
-          const ajustarLetra = (letra) => {
-            const mapa = { Q: 'quê', W: 'dáblio', Y: 'ípsilon', E: 'é' };
-            return mapa[letra?.toUpperCase()] || letra?.toUpperCase();
-          };
-          const placaSeparada = (carro.placa || '')
-            .toString().toUpperCase().split('').map(ajustarLetra).join(' ');
-
-          const modeloCorrigido = corrigirPronunciaModelo(carro.modelo);
-          const frase = `Serviço finalizado, Carro ${modeloCorrigido}, placa ${placaSeparada}, cor ${carro.cor}, dirija-se ao caixa. Obrigado pela preferência!`;
-
-          const url = new URL(`${API_BASE}/api/tts`);
-          url.searchParams.set('text', frase);
-          const tk = getToken();
-          if (tk) url.searchParams.set('token', tk); // caso seu backend aceite
-
-          const reason = await playUrl(url.toString(), { volume: 1, timeoutMs: 15000 });
-
-          if (reason !== 'ended') {
-            const ok = speak(frase);
-            if (!ok) await playWithFallback('/busina.mp3', { timeoutMs: 1500 }).catch(() => {});
-          }
-        } catch (e) {
-          console.warn('Erro no fluxo de áudio:', e);
-        }
-      };
-
-      if (audioOK) {
-        tocarFluxo();
-      } else {
-        // espera liberação de áudio por até 20s
-        const watch = setInterval(() => {
-          if (audioOK) { clearInterval(watch); tocarFluxo(); }
-        }, 250);
-        setTimeout(() => clearInterval(watch), 20000);
-      }
-
-      if (timeoutDestaqueRef.current) clearTimeout(timeoutDestaqueRef.current);
-      timeoutDestaqueRef.current = setTimeout(() => {
-        setCarroFinalizado(null);
-        setEmDestaque(false);
-      }, 30000);
+      // (se quiser, aqui entra o seu fluxo de áudio/TTS)
     };
 
     const onNovoCarroAdicionado = () => {
@@ -498,6 +415,13 @@ export default function Painel() {
 
   const carroDestaque = carroFinalizado || fila[carroAtual];
   const overlayItems = useMemo(() => visibleNow(nowMS()), [playlist]);
+
+  // Helpers para a imagem do overlay (evita IIFE na JSX)
+  const currentOverlayItem = overlayItems.length ? overlayItems[overlayIdx % overlayItems.length] : null;
+  const currentOverlayBase =
+    currentOverlayItem ? (currentOverlayItem.src || `${API_BASE}${currentOverlayItem.url}`) : '';
+  const currentOverlayImgSrc =
+    currentOverlayBase ? `${currentOverlayBase}${currentOverlayBase.includes('?') ? '&' : '?'}_=${Date.now()}` : '';
 
   return (
     <div className="painel">
@@ -599,16 +523,12 @@ export default function Painel() {
       </div>
 
       {/* OVERLAY DE MÍDIA */}
-      {overlayOn && overlayItems.length > 0 && (
+      {overlayOn && currentOverlayItem && (
         <div className="media-overlay" onClick={() => stopOverlay(true)}>
-          {isVideoKind(overlayItems[overlayIdx % overlayItems.length]) ? (
+          {isVideoKind(currentOverlayItem) ? (
             <video ref={videoRef} className="media-el" />
           ) : (
-            <img
-              className="media-el"
-              alt={overlayItems[overlayIdx % overlayItems.length].titulo || 'mídia'}
-              src={getImgSrc(overlayItems[overlayIdx % overlayItems.length])}
-            />
+            <img className="media-el" alt={currentOverlayItem.titulo || 'mídia'} src={currentOverlayImgSrc} />
           )}
         </div>
       )}
