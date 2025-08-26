@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
 
 // ===== Ajuste conforme ambiente =====
-// const API_BASE = 'http://localhost:3001';
+//const API_BASE = 'http://localhost:3001';
 const API_BASE = 'https://recepcaopneuforte.onrender.com';
 
 const socket = io(API_BASE);

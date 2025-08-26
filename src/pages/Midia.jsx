@@ -2,33 +2,12 @@
 import React, { useEffect, useRef, useState } from "react";
 import "./Midia.css";
 
-const DEFAULT_DURATION_MS = 8000;       // 8s
-const DEFAULT_SEQ_STEP_MS = 10000;      // 10s
+// ===== Ajuste conforme ambiente =====
+//const API_BASE = "http://localhost:3001";
+const API_BASE = "https://recepcaopneuforte.onrender.com";
 
-const PRESETS = [
-  { key: "local",  label: "Localhost (3001)",             url: "http://localhost:3001" },
-  { key: "render", label: "Hospedagem (Render)",          url: "https://recepcaopneuforte.onrender.com" },
-  { key: "same",   label: "Mesmo host do front (vazio)",  url: "" }, // usa o mesmo domínio do front
-];
-const CUSTOM_KEY = "__custom__";
-
-function pickInitialApiBase() {
-  try {
-    const u = new URL(window.location.href);
-    const qs = u.searchParams.get("api");
-    if (qs) {
-      if (qs === "local")  return "http://localhost:3001";
-      if (qs === "render") return "https://recepcaopneuforte.onrender.com";
-      if (qs === "same" || qs === "/") return "";
-      if (/^https?:\/\//i.test(qs)) return qs;
-    }
-  } catch {}
-  const saved = localStorage.getItem("apiBase");
-  if (saved !== null) return saved;
-  if (location.hostname === "localhost" || location.hostname === "127.0.0.1")
-    return "http://localhost:3001";
-  return "https://recepcaopneuforte.onrender.com";
-}
+const DEFAULT_DURATION_MS = 8000;   // 8s
+const DEFAULT_SEQ_STEP_MS = 10000;  // 10s
 
 // utils
 const toInt = (v, d) => {
@@ -51,62 +30,51 @@ const msToHuman = (ms) => {
 };
 
 export default function Midia() {
-  // ----- seletor de backend -----
-  const [apiBase, setApiBase] = useState(pickInitialApiBase());
-  const [customUrl, setCustomUrl] = useState(() => localStorage.getItem("apiBaseCustom") || "");
-  const selectValue = PRESETS.some(p => p.url === apiBase) ? apiBase : CUSTOM_KEY;
-  useEffect(() => { localStorage.setItem("apiBase", apiBase); }, [apiBase]);
-
-  // token (precisa existir no MESMO domínio do front atual)
+  // token salvo pelo login (mesmo domínio do front em uso)
   const token = (localStorage.getItem("token") || "").trim();
 
-  // helpers de request
+  // --- helper de URL ---
   const makeUrl = (pathOrFull) => {
     if (!pathOrFull) return "";
     if (/^(https?:)?\/\//i.test(pathOrFull) || pathOrFull.startsWith("blob:") || pathOrFull.startsWith("data:")) {
       return pathOrFull;
     }
-    return `${apiBase}${pathOrFull}`;
+    return `${API_BASE}${pathOrFull}`;
   };
 
+  // --- fetch com auth ---
   async function apiAuth(path, opt = {}) {
     const headers = opt.headers ? { ...opt.headers } : {};
-
-    // Só coloca Content-Type se EXISTIR body JSON (e não for FormData)
-    const hasJsonBody = opt.body && !(opt.body instanceof FormData);
-    if (hasJsonBody) headers["Content-Type"] = "application/json";
-
-    // Sempre envia Authorization se tivermos token
+    // só define Content-Type se NÃO for FormData
+    if (opt.body && !(opt.body instanceof FormData)) headers["Content-Type"] = "application/json";
     if (token) headers["Authorization"] = `Bearer ${token}`;
 
-    const fetchOpts = {
+    const resp = await fetch(makeUrl(path), {
       ...opt,
       headers,
       cache: "no-store",
-      // cookies só se mesmo host (não precisa em Render)
-      credentials: apiBase ? "omit" : "include",
-    };
+      credentials: "omit",
+    });
 
-    const resp = await fetch(makeUrl(path), fetchOpts);
     if (!resp.ok) {
       let detail = "";
       try { detail = await resp.text(); } catch {}
-      // mensagens mais claras
       if (resp.status === 401) {
-        throw new Error("token_required: faça login neste domínio para obter o token.");
+        throw new Error("token_required: faça login neste domínio para continuar.");
       }
-      throw new Error(`${detail || "erro"} (HTTP ${resp.status})`);
+      throw new Error(detail || `HTTP ${resp.status}`);
     }
+
     try { return await resp.json(); } catch { return {}; }
   }
 
-  // ----- estado -----
+  // --- estado ---
   const [midias, setMidias] = useState([]);
   const [msg, setMsg] = useState("");
   const [err, setErr] = useState("");
   const [isSaving, setIsSaving] = useState(false);
 
-  // ref do input de arquivo (para reset real)
+  // input de arquivo (para reset real)
   const fileInputRef = useRef(null);
   const [fileInputKey, setFileInputKey] = useState(0);
 
@@ -121,7 +89,7 @@ export default function Midia() {
     seq_step_sec: 10,
   });
 
-  // carregar lista
+  // --- carregar lista ---
   const carregarMidias = async () => {
     setErr(""); setMsg("");
     try {
@@ -129,31 +97,33 @@ export default function Midia() {
       setMidias(Array.isArray(data) ? data : []);
     } catch (e) {
       console.error(e);
-      setErr(e.message.includes("token_required")
-        ? "Não foi possível carregar a lista de mídias: faça login neste domínio."
-        : "Não foi possível carregar a lista de mídias (verifique login/backend).");
+      setErr(
+        e.message?.includes("token_required")
+          ? "Não foi possível carregar as mídias: faça login neste domínio."
+          : "Não foi possível carregar a lista de mídias."
+      );
       setMidias([]);
     }
   };
-  useEffect(() => { carregarMidias(); /* eslint-disable-line */ }, []);
-  useEffect(() => { carregarMidias(); }, [apiBase]);
 
-  // seleção de arquivos
+  useEffect(() => { carregarMidias(); /* eslint-disable-line */ }, []);
+
+  // --- seleção de arquivos ---
   const onFiles = (e) => {
     const list = Array.from(e.target.files || []);
-    if (!list.length) return setForm(f => ({ ...f, files: [] }));
-    const firstVideo = list.find(f => f.type.startsWith("video/"));
-    if (firstVideo) return setForm(f => ({ ...f, files: [firstVideo] })); // só 1 vídeo
-    const imgs = list.filter(f => f.type.startsWith("image/"));
-    setForm(f => ({ ...f, files: imgs }));
+    if (!list.length) return setForm((f) => ({ ...f, files: [] }));
+    const firstVideo = list.find((f) => f.type.startsWith("video/"));
+    if (firstVideo) return setForm((f) => ({ ...f, files: [firstVideo] })); // só 1 vídeo
+    const imgs = list.filter((f) => f.type.startsWith("image/"));
+    setForm((f) => ({ ...f, files: imgs }));
   };
 
   const limparInputArquivo = () => {
     if (fileInputRef.current) fileInputRef.current.value = "";
-    setFileInputKey(k => k + 1); // força recriar o input (reset)
+    setFileInputKey((k) => k + 1);
   };
 
-  // salvar
+  // --- salvar ---
   const salvar = async () => {
     if (isSaving) return;
     setErr(""); setMsg("");
@@ -189,26 +159,27 @@ export default function Midia() {
         fd.append("data_fim", form.data_fim || "");
         fd.append("intervalo_minutos", String(intervaloMin));
         fd.append("image_duration_ms", String(image_duration_ms));
-        // dicas p/ backend (pode ignorar)
+        // dicas para o backend (opcional)
         fd.append("seq_enabled", String(seq_enabled ? 1 : 0));
         fd.append("seq_count", String(seq_enabled ? form.files.length : 1));
         fd.append("seq_step_ms", String(seq_enabled ? seq_step_ms : 0));
 
-        // cache-bust no endpoint (evita cache/CDN)
+        // cache-buster no endpoint
         const endpoint = `/api/midia?ts=${Date.now()}&uid=${Math.random().toString(36).slice(2)}`;
 
         await apiAuth(endpoint, { method: "POST", body: fd });
         okCount++;
       }
 
-      setMsg(isVideo
-        ? "Vídeo enviado com sucesso."
-        : okCount > 1
-          ? `Imagens enviadas: ${okCount}.`
-          : "Imagem enviada com sucesso."
+      setMsg(
+        isVideo
+          ? "Vídeo enviado com sucesso."
+          : okCount > 1
+            ? `Imagens enviadas: ${okCount}.`
+            : "Imagem enviada com sucesso."
       );
 
-      // resetar form
+      // reset
       setForm({
         titulo: "",
         files: [],
@@ -229,7 +200,7 @@ export default function Midia() {
     }
   };
 
-  // excluir
+  // --- excluir ---
   const excluir = async (id) => {
     setErr(""); setMsg("");
     try {
@@ -238,15 +209,17 @@ export default function Midia() {
       carregarMidias();
     } catch (e) {
       console.error(e);
-      setErr(e.message.includes("token_required")
-        ? "Erro ao excluir: faça login neste domínio."
-        : "Erro ao excluir.");
+      setErr(
+        e.message?.includes("token_required")
+          ? "Erro ao excluir: faça login neste domínio."
+          : "Erro ao excluir."
+      );
     }
   };
 
   const resolveUrl = (u) => makeUrl(u);
 
-  const isMultiImage = form.files.length > 1 && form.files.every(f => f.type.startsWith("image/"));
+  const isMultiImage = form.files.length > 1 && form.files.every((f) => f.type.startsWith("image/"));
   const isVideoSel = form.files.length === 1 && form.files[0]?.type.startsWith("video/");
   const tempoMs = humanToMs(form.durationValue, form.durationUnit);
 
@@ -254,50 +227,7 @@ export default function Midia() {
     <div className="midia-container">
       <h2>Gerenciar Mídias</h2>
 
-      {/* seletor de backend */}
-      <div className="backend-picker">
-        <label>Backend</label>
-        <div className="backend-line">
-          <select
-            value={selectValue}
-            onChange={(e) => {
-              const v = e.target.value;
-              if (v === CUSTOM_KEY) {
-                setApiBase(customUrl || "");
-              } else {
-                setApiBase(v);
-              }
-            }}
-          >
-            {PRESETS.map(p => (
-              <option key={p.key} value={p.url}>{p.label}</option>
-            ))}
-            <option value={CUSTOM_KEY}>Personalizado…</option>
-          </select>
-
-          {selectValue === CUSTOM_KEY && (
-            <input
-              type="text"
-              placeholder="https://seu-backend.com"
-              value={customUrl}
-              onChange={(e) => {
-                const v = e.target.value.trim();
-                setCustomUrl(v);
-                localStorage.setItem("apiBaseCustom", v);
-                setApiBase(v);
-              }}
-            />
-          )}
-        </div>
-        <div className="muted using">
-          Usando: {apiBase || "(mesmo host do front)"}.
-          <span style={{ marginLeft: 8, opacity: .8 }}>
-            {token ? "✅ logado" : "⚠️ sem login neste domínio"}
-          </span>
-        </div>
-      </div>
-
-      {/* formulário */}
+      {/* FORM */}
       <div className="midia-form">
         <div className="row">
           <input
@@ -396,7 +326,7 @@ export default function Midia() {
         </div>
       </div>
 
-      {/* lista */}
+      {/* LISTA */}
       <h3>Mídias Cadastradas</h3>
       <ul className="midia-lista">
         {midias.map((m) => (
@@ -405,7 +335,8 @@ export default function Midia() {
               <div>
                 <strong>{m.titulo || "(sem título)"}</strong>
                 <div className="muted meta">
-                  {(m.tipo === "IMG" ? "Imagem" : "Vídeo")} · fica {msToHuman(Number(m.image_duration_ms) || DEFAULT_DURATION_MS)} na tela
+                  {(m.tipo === "IMG" ? "Imagem" : "Vídeo")} · fica{" "}
+                  {msToHuman(Number(m.image_duration_ms) || DEFAULT_DURATION_MS)} na tela
                   {m.intervalo_minutos != null ? ` · Intervalo: ${m.intervalo_minutos} min` : ""}
                 </div>
                 {(m.data_inicio || m.data_fim) && (
@@ -416,14 +347,17 @@ export default function Midia() {
                   </div>
                 )}
                 <div className="preview">
-                  {m.tipo === "IMG"
-                    ? <img src={resolveUrl(m.url)} alt={m.titulo || "img"} />
-                    : <video src={resolveUrl(m.url)} muted controls />
-                  }
+                  {m.tipo === "IMG" ? (
+                    <img src={resolveUrl(m.url)} alt={m.titulo || "img"} />
+                  ) : (
+                    <video src={resolveUrl(m.url)} muted controls />
+                  )}
                 </div>
               </div>
               <div className="right-actions">
-                <button className="btn danger" onClick={() => excluir(m.id)}>Excluir</button>
+                <button className="btn danger" onClick={() => excluir(m.id)}>
+                  Excluir
+                </button>
               </div>
             </div>
           </li>
