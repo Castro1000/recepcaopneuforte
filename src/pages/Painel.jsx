@@ -8,12 +8,13 @@ import { io } from 'socket.io-client';
 const API_BASE = 'https://recepcaopneuforte.onrender.com';
 // const API_BASE = 'http://localhost:3001';
 
+// Socket
 const socket = io(API_BASE, { transports: ['websocket', 'polling'], reconnection: true });
 
-// Flags
+// Flags por querystring
 const URLQS = new URLSearchParams(window.location.search);
 const DEBUG = URLQS.has('debug');
-const FORCE_SHOW = URLQS.has('show');   // força o overlay abrir se houver item ativo
+const FORCE_SHOW = URLQS.has('show'); // força overlay abrir se houver item ativo
 const dlog = (...a) => { if (DEBUG) console.log('[Painel]', ...a); };
 
 export default function Painel() {
@@ -69,7 +70,7 @@ export default function Painel() {
     }
   };
 
-  // ------- Helpers de fetch JSON (Authorization + ?token= fallback) -------
+  // ------- Fetch JSON (Authorization + fallback ?token=) -------
   const fetchFirstOk = async (paths) => {
     for (const path of paths) {
       try {
@@ -161,19 +162,21 @@ export default function Painel() {
   // ================== Liberação de áudio (click/OK) ==================
   const unlockAudio = async () => {
     try {
-      // desbloqueio de áudio
+      // “desbloqueio” de áudio
       const a = new Audio('/motor.mp3');
       a.volume = 0;
       await a.play().catch(() => {});
       a.pause(); a.currentTime = 0;
+
       if ('speechSynthesis' in window) {
         const u = new SpeechSynthesisUtterance(' ');
         u.lang = 'pt-BR';
         window.speechSynthesis.speak(u);
       }
+
       setAudioOK(true);
 
-      // desmuta vídeo se já estiver tocando
+      // Desmuta vídeo se já estiver tocando
       const v = videoRef.current;
       if (v && !v.paused) {
         try { v.muted = false; v.volume = 1; await v.play(); } catch {}
@@ -201,8 +204,101 @@ export default function Painel() {
     return () => document.removeEventListener('keydown', onKey, true);
   }, [audioOK]);
 
+  // ================== Helpers de áudio/voz ==================
+  const corrigirPronunciaModelo = (modelo) => {
+    const m = (modelo || '').toString().trim();
+    const upper = m.toUpperCase();
+    switch (upper) {
+      case 'KWID': return 'cuidi';
+      case 'BYD': return 'biu ai di';
+      case 'HB20': return 'agá bê vinte';
+      case 'ONIX': return 'ônix';
+      case 'T-CROSS': return 'tê cross';
+      case 'HR-V': return 'agá érre vê';
+      case 'CR-V': return 'cê érre vê';
+      case 'FERRARI': return 'FÉRRARI';
+      case 'MOBI': return 'MÓBI';
+      default: return m;
+    }
+  };
+
+  const speak = (texto) => {
+    if (!('speechSynthesis' in window)) return false;
+    try {
+      const u = new SpeechSynthesisUtterance(texto);
+      u.lang = 'pt-BR'; u.rate = 1.0;
+      const voices = window.speechSynthesis.getVoices?.() || [];
+      const v = voices.find(v => v.lang?.toLowerCase().startsWith('pt')) || voices[0];
+      if (v) u.voice = v;
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.speak(u);
+      return true;
+    } catch { return false; }
+  };
+
+  const playUrl = (url, { volume = 1, timeoutMs = 15000 } = {}) =>
+    new Promise((resolve) => {
+      const a = new Audio();
+      a.preload = 'auto';
+      a.crossOrigin = 'anonymous';
+      a.volume = volume;
+      const sep = url.includes('?') ? '&' : '?';
+      a.src = `${url}${sep}_=${Date.now()}`;
+      let done = false;
+      const finish = (reason='ok') => { if (done) return; done = true; try{a.pause();}catch{} resolve(reason); };
+      a.addEventListener('canplay', () => a.play().catch(() => finish('blocked')));
+      a.addEventListener('ended', () => finish('ended'));
+      a.addEventListener('error', () => finish('error'));
+      a.load();
+      setTimeout(() => finish('timeout'), timeoutMs);
+    });
+
+  const playWithFallback = (url, { volume = 1, timeoutMs = 7000 } = {}) =>
+    new Promise((resolve) => {
+      const a = new Audio(url);
+      a.preload = 'auto'; a.volume = volume;
+      let done = false;
+      const finish = (reason='ok') => { if (done) return; done = true; try{a.pause();}catch{} resolve(reason); };
+      a.addEventListener('ended', () => finish('ended'));
+      a.addEventListener('error', () => finish('error'));
+      a.play().catch(() => finish('blocked'));
+      setTimeout(() => finish('timeout'), timeoutMs);
+    });
+
   // ================== Agendamento / Overlay ==================
-  const parseMaybe = (s) => (s ? new Date(s).getTime() : null);
+
+  // *** NOVO parseMaybe: aceita "YYYY-MM-DD HH:mm:ss" e "DD/MM/YYYY HH:mm[:ss]" como LOCAL ***
+  const parseMaybe = (s) => {
+    if (s == null || s === '') return null;
+    if (typeof s === 'number') return s;
+
+    let str = String(s).trim();
+
+    // "YYYY-MM-DD HH:mm[:ss]" → tratar como local (sem Z)
+    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}(:\d{2})?$/.test(str)) {
+      str = str.replace(' ', 'T'); // ISO local
+    }
+
+    // "DD/MM/YYYY HH:mm[:ss]"
+    const m = str.match(/^(\d{2})\/(\d{2})\/(\d{4})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?$/);
+    if (m) {
+      const [, dd, MM, yyyy, hh = '00', mm = '00', ss = '00'] = m;
+      const d = new Date(
+        Number(yyyy),
+        Number(MM) - 1,
+        Number(dd),
+        Number(hh),
+        Number(mm),
+        Number(ss)
+      );
+      const t = d.getTime();
+      return Number.isFinite(t) ? t : null;
+    }
+
+    const t = new Date(str).getTime();
+    return Number.isFinite(t) ? t : null;
+  };
+
   const inDateWindow = (item, t) => {
     const ini = parseMaybe(item.data_inicio);
     const fim = parseMaybe(item.data_fim);
@@ -210,6 +306,7 @@ export default function Painel() {
     if (fim && t > fim) return false;
     return true;
   };
+
   const isActive = (x) => (x?.ativo == null ? 1 : Number(x.ativo)) === 1;
 
   const visibleNow = (t) =>
@@ -235,7 +332,6 @@ export default function Painel() {
     const bs = blockStart(it, t);
     return t >= bs && (t - bs) < wndSec * 1000;
   };
-
   const mustOpenOverlayNow = (t) => {
     const vis = visibleNow(t);
     if (FORCE_SHOW) return vis.length > 0;
@@ -299,7 +395,7 @@ export default function Painel() {
 
   const isVideoKind = (x) => {
     const t = String(x?.tipo || '').toUpperCase();
-    if (t.startsWith('VID')) return true;
+    if (t.startsWith('VID')) return true; // VIDEO / VID / VIDEO...
     const raw = x?.src || x?.url || '';
     return /\.(mp4|webm|ogv|m3u8)(\?|#|$)/i.test(raw);
   };
@@ -308,11 +404,12 @@ export default function Painel() {
   const resolveBase = (it) => {
     const raw = it?.src || it?.url || '';
     if (!raw) return '';
-    if (/^https?:\/\//i.test(raw)) return raw;
-    const path = raw.startsWith('/') ? raw : `/${raw}`;
+    if (/^https?:\/\//i.test(raw)) return raw;           // absoluta
+    const path = raw.startsWith('/') ? raw : `/${raw}`;  // relativa → API_BASE
     return `${API_BASE}${path}`;
   };
   const withCacheBuster = (base) => base + (base.includes('?') ? '&' : '?') + '_=' + Date.now();
+  const imgSrcFor = (it) => withCacheBuster(resolveBase(it));
 
   // ============ Player de vídeo (estável) ============
   const startVideo = (videoEl, url, wantsSound) => {
@@ -326,6 +423,7 @@ export default function Painel() {
     videoEl.playsInline = true;
     videoEl.autoplay = true;
     videoEl.preload = 'auto';
+    // NÃO setar crossOrigin se o host não expõe CORS
 
     // zera e aplica src
     try { videoEl.pause(); } catch {}
@@ -610,11 +708,7 @@ export default function Painel() {
             <img
               className="media-el"
               alt={overlayItems[overlayIdx % overlayItems.length].titulo || 'mídia'}
-              src={(function () {
-                const it = overlayItems[overlayIdx % overlayItems.length];
-                const base = resolveBase(it);
-                return withCacheBuster(base);
-              })()}
+              src={imgSrcFor(overlayItems[overlayIdx % overlayItems.length])}
             />
           )}
         </div>
