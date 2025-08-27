@@ -10,6 +10,12 @@ const API_BASE = 'https://recepcaopneuforte.onrender.com';
 
 const socket = io(API_BASE, { transports: ['websocket', 'polling'], reconnection: true });
 
+// Flags
+const URLQS = new URLSearchParams(window.location.search);
+const DEBUG = URLQS.has('debug');
+const FORCE_SHOW = URLQS.has('show');   // força o overlay abrir se houver item ativo
+const dlog = (...a) => { if (DEBUG) console.log('[Painel]', ...a); };
+
 export default function Painel() {
   // grava ?token=... no localStorage (útil no Render)
   useEffect(() => {
@@ -38,7 +44,7 @@ export default function Painel() {
   const videoRef = useRef(null);
   const imgTimerRef = useRef(null);
 
-  // suprimir reabertura no mesmo bloco
+  // janelas
   const suppressUntilRef = useRef(0);
   const overlayBlockEndRef = useRef(0);
 
@@ -63,7 +69,7 @@ export default function Painel() {
     }
   };
 
-  // ------- Helpers de fetch JSON (com fallback ?token=) -------
+  // ------- Helpers de fetch JSON (Authorization + ?token= fallback) -------
   const fetchFirstOk = async (paths) => {
     for (const path of paths) {
       try {
@@ -72,7 +78,7 @@ export default function Painel() {
         if (!r.ok) throw new Error(String(r.status));
         return await r.json();
       } catch (e) {
-        console.warn('fetch falhou:', path, e?.message || e);
+        dlog('fetch falhou:', path, e?.message || e);
       }
     }
     return null;
@@ -81,7 +87,7 @@ export default function Painel() {
   // ------- Normalização de mídia/playlist -------
   const normalize = (arr) =>
     (arr || []).map((m) => {
-      const tipoRaw = String(m.tipo || '').toUpperCase();
+      const tipoRaw = String(m.tipo || '').toUpperCase().trim();
       return {
         id: m.id,
         url: m.url,
@@ -101,7 +107,7 @@ export default function Painel() {
       };
     });
 
-  // ------- Buscar playlist (tenta Authorization e ?token=) -------
+  // ------- Buscar playlist -------
   const fetchPlaylist = async () => {
     try {
       const tk = getToken();
@@ -117,7 +123,9 @@ export default function Painel() {
         ? itemsJson
         : Array.isArray(itemsJson?.items) ? itemsJson.items : [];
 
-      setPlaylist(normalize(items));
+      const norm = normalize(items);
+      setPlaylist(norm);
+      dlog('Playlist:', norm);
     } catch (e) {
       console.warn('Falha ao buscar playlist:', e);
       setPlaylist([]);
@@ -153,6 +161,7 @@ export default function Painel() {
   // ================== Liberação de áudio (click/OK) ==================
   const unlockAudio = async () => {
     try {
+      // desbloqueio de áudio
       const a = new Audio('/motor.mp3');
       a.volume = 0;
       await a.play().catch(() => {});
@@ -164,7 +173,7 @@ export default function Painel() {
       }
       setAudioOK(true);
 
-      // Se um vídeo já estiver tocando, desmuta
+      // desmuta vídeo se já estiver tocando
       const v = videoRef.current;
       if (v && !v.paused) {
         try { v.muted = false; v.volume = 1; await v.play(); } catch {}
@@ -192,67 +201,6 @@ export default function Painel() {
     return () => document.removeEventListener('keydown', onKey, true);
   }, [audioOK]);
 
-  // ================== Helpers de áudio/voz ==================
-  const corrigirPronunciaModelo = (modelo) => {
-    const m = (modelo || '').toString().trim();
-    const upper = m.toUpperCase();
-    switch (upper) {
-      case 'KWID': return 'cuidi';
-      case 'BYD': return 'biu ai di';
-      case 'HB20': return 'agá bê vinte';
-      case 'ONIX': return 'ônix';
-      case 'T-CROSS': return 'tê cross';
-      case 'HR-V': return 'agá érre vê';
-      case 'CR-V': return 'cê érre vê';
-      case 'FERRARI': return 'FÉRRARI';
-      case 'MOBI': return 'MÓBI';
-      default: return m;
-    }
-  };
-
-  const speak = (texto) => {
-    if (!('speechSynthesis' in window)) return false;
-    try {
-      const u = new SpeechSynthesisUtterance(texto);
-      u.lang = 'pt-BR'; u.rate = 1.0;
-      const voices = window.speechSynthesis.getVoices?.() || [];
-      const v = voices.find(v => v.lang?.toLowerCase().startsWith('pt')) || voices[0];
-      if (v) u.voice = v;
-      window.speechSynthesis.cancel();
-      window.speechSynthesis.speak(u);
-      return true;
-    } catch { return false; }
-  };
-
-  const playUrl = (url, { volume = 1, timeoutMs = 15000 } = {}) =>
-    new Promise((resolve) => {
-      const a = new Audio();
-      a.preload = 'auto';
-      a.crossOrigin = 'anonymous';
-      a.volume = volume;
-      const sep = url.includes('?') ? '&' : '?';
-      a.src = `${url}${sep}_=${Date.now()}`;
-      let done = false;
-      const finish = (reason='ok') => { if (done) return; done = true; try{a.pause();}catch{} resolve(reason); };
-      a.addEventListener('canplay', () => a.play().catch(() => finish('blocked')));
-      a.addEventListener('ended', () => finish('ended'));
-      a.addEventListener('error', () => finish('error'));
-      a.load();
-      setTimeout(() => finish('timeout'), timeoutMs);
-    });
-
-  const playWithFallback = (url, { volume = 1, timeoutMs = 7000 } = {}) =>
-    new Promise((resolve) => {
-      const a = new Audio(url);
-      a.preload = 'auto'; a.volume = volume;
-      let done = false;
-      const finish = (reason='ok') => { if (done) return; done = true; try{a.pause();}catch{} resolve(reason); };
-      a.addEventListener('ended', () => finish('ended'));
-      a.addEventListener('error', () => finish('error'));
-      a.play().catch(() => finish('blocked'));
-      setTimeout(() => finish('timeout'), timeoutMs);
-    });
-
   // ================== Agendamento / Overlay ==================
   const parseMaybe = (s) => (s ? new Date(s).getTime() : null);
   const inDateWindow = (item, t) => {
@@ -262,14 +210,13 @@ export default function Painel() {
     if (fim && t > fim) return false;
     return true;
   };
-
   const isActive = (x) => (x?.ativo == null ? 1 : Number(x.ativo)) === 1;
 
   const visibleNow = (t) =>
     (playlist || [])
       .filter(isActive)
       .filter((x) => inDateWindow(x, t))
-      .sort((a, b) => (a.ord ?? 0) - (b.ord ?? 0) || a.id - b.id);
+      .sort((a, b) => (a.ord ?? 0) - (b.ord ?? 0) || String(a.id).localeCompare(String(b.id)));
 
   const ivMs = (it) => Math.max(0, Number(it.intervalo_minutos || 0) * 60000);
   const anchorMs = (it) => {
@@ -282,7 +229,6 @@ export default function Painel() {
     const base = anchorMs(it);
     return Math.floor((t - base) / iv) * iv + base;
   };
-
   const inIntervalWindow = (it, t, wndSec) => {
     const iv = ivMs(it);
     if (iv <= 0) return true;
@@ -290,19 +236,24 @@ export default function Painel() {
     return t >= bs && (t - bs) < wndSec * 1000;
   };
 
-  const mustOpenOverlayNow = (t) =>
-    visibleNow(t).some((it) => inIntervalWindow(it, t, windowSec));
+  const mustOpenOverlayNow = (t) => {
+    const vis = visibleNow(t);
+    if (FORCE_SHOW) return vis.length > 0;
+    return vis.some((it) => inIntervalWindow(it, t, windowSec));
+  };
 
+  // tick imediato + 500ms
   useEffect(() => {
     const tick = () => {
       const t = nowMS();
+      const vis = visibleNow(t);
+      dlog('tick', { visiveis: vis.length, overlayOn, t, FORCE_SHOW });
       if (t < suppressUntilRef.current) return;
 
       if (carroFinalizado) {
         if (overlayOn) stopOverlay(false);
         return;
       }
-
       if (mustOpenOverlayNow(t)) {
         if (!overlayOn) startOverlay(t);
       } else {
@@ -330,6 +281,7 @@ export default function Painel() {
     } else {
       overlayBlockEndRef.current = tStart + windowSec * 1000;
     }
+    dlog('overlay START', { ate: overlayBlockEndRef.current, ref });
   };
 
   const stopOverlay = (closeAndSuppress = true) => {
@@ -342,41 +294,93 @@ export default function Painel() {
     if (closeAndSuppress) {
       suppressUntilRef.current = Math.max(suppressUntilRef.current, overlayBlockEndRef.current || 0);
     }
+    dlog('overlay STOP');
   };
 
-  const isVideoKind = (x) => String(x?.tipo || '').toUpperCase().startsWith('VID');
+  const isVideoKind = (x) => {
+    const t = String(x?.tipo || '').toUpperCase();
+    if (t.startsWith('VID')) return true;
+    const raw = x?.src || x?.url || '';
+    return /\.(mp4|webm|ogv|m3u8)(\?|#|$)/i.test(raw);
+  };
 
-  // --------- Resolvedores de URL ---------
+  // --------- URL helpers ---------
   const resolveBase = (it) => {
     const raw = it?.src || it?.url || '';
     if (!raw) return '';
-    if (/^https?:\/\//i.test(raw)) return raw;              // já absoluta
-    const path = raw.startsWith('/') ? raw : `/${raw}`;     // relativa → API_BASE
+    if (/^https?:\/\//i.test(raw)) return raw;
+    const path = raw.startsWith('/') ? raw : `/${raw}`;
     return `${API_BASE}${path}`;
   };
+  const withCacheBuster = (base) => base + (base.includes('?') ? '&' : '?') + '_=' + Date.now();
 
-  // helper: src da imagem com cache-buster
-  const getImgSrc = (it) => {
-    const base = resolveBase(it);
-    return base + (base.includes('?') ? '&' : '?') + '_=' + Date.now();
+  // ============ Player de vídeo (estável) ============
+  const startVideo = (videoEl, url, wantsSound) => {
+    if (!videoEl || !url) return;
+
+    // atributos ANTES do src (autoplay seguro)
+    videoEl.setAttribute('muted', '');
+    videoEl.setAttribute('playsinline', '');
+    videoEl.setAttribute('webkit-playsinline', '');
+    videoEl.muted = true;
+    videoEl.playsInline = true;
+    videoEl.autoplay = true;
+    videoEl.preload = 'auto';
+
+    // zera e aplica src
+    try { videoEl.pause(); } catch {}
+    try { videoEl.removeAttribute('src'); videoEl.load(); } catch {}
+
+    const src = withCacheBuster(url);
+    videoEl.src = src;
+
+    let failTimer = setTimeout(() => {
+      dlog('FAILSAFE 8s — não ficou playing, fechando overlay');
+      stopOverlay(true);
+    }, 8000);
+
+    const tryUnmute = () => {
+      if (!wantsSound) return;
+      if (!audioOK) return;
+      [0, 150, 600, 2000].forEach((ms) =>
+        setTimeout(() => { try { videoEl.muted = false; videoEl.volume = 1; } catch {} }, ms)
+      );
+    };
+
+    videoEl.onloadeddata = async () => {
+      try { if (videoEl.currentTime === 0) videoEl.currentTime = 0.001; } catch {}
+      try {
+        await videoEl.play();
+        dlog('play() OK');
+        tryUnmute();
+      } catch (e) {
+        dlog('play() falhou, tenta mudo', e);
+        try {
+          videoEl.muted = true;
+          await videoEl.play();
+          tryUnmute();
+        } catch (e2) {
+          clearTimeout(failTimer);
+          stopOverlay(true);
+        }
+      }
+    };
+    videoEl.onplaying = () => { clearTimeout(failTimer); dlog('onplaying'); tryUnmute(); };
+    videoEl.onended = () => { dlog('onended'); stopOverlay(true); };
+    videoEl.onerror = () => { dlog('onerror'); stopOverlay(true); };
+
+    try { videoEl.load(); } catch {}
   };
+  // ===============================================
 
-  // quando o áudio for liberado, desmuta o vídeo que já estiver tocando
-  useEffect(() => {
-    if (!audioOK) return;
-    const v = videoRef.current;
-    if (v && !v.paused) {
-      try { v.muted = false; v.volume = 1; v.play(); } catch {}
-    }
-  }, [audioOK, overlayOn]);
-
-  // tocar item atual (vídeo começa mudo e desmuta ao liberar áudio)
+  // tocar item atual (vídeo/ imagem)
   useEffect(() => {
     if (!overlayOn) return;
     const items = visibleNow(nowMS());
     if (!items.length) return;
 
     const current = items[overlayIdx % items.length];
+    dlog('Tocar item', current);
 
     if (imgTimerRef.current) { clearTimeout(imgTimerRef.current); imgTimerRef.current = null; }
 
@@ -384,46 +388,14 @@ export default function Painel() {
     if (!base) { stopOverlay(true); return; }
 
     if (isVideoKind(current)) {
-      const v = videoRef.current;
-      if (!v) return;
-
-      // atributos antes do src (autoplay seguro)
-      v.setAttribute('muted', '');
-      v.setAttribute('playsinline', '');
-      v.setAttribute('webkit-playsinline', '');
-      v.muted = true;
-      v.playsInline = true;
-      v.autoplay = true;
-      v.preload = 'auto';
-      // v.crossOrigin = 'anonymous'; // evite se o host não expõe CORS
-
-      const mediaSrc = base + (base.includes('?') ? '&' : '?') + '_=' + Date.now();
-      v.onended = () => stopOverlay(true);
-      v.onerror = () => stopOverlay(true);
-
-      const failTimer = setTimeout(() => stopOverlay(true), 8000);
-      v.onplaying = () => {
-        clearTimeout(failTimer);
-        if (audioOK) { try { v.muted = false; v.volume = 1; } catch {} }
-      };
-
-      v.onloadeddata = () => {
-        v.play().then(() => {
-          if (audioOK) { try { v.muted = false; v.volume = 1; } catch {} }
-        }).catch(() => stopOverlay(true));
-      };
-
-      try { v.pause(); } catch {}
-      try { v.removeAttribute('src'); v.load(); } catch {}
-      v.src = mediaSrc;
-      try { v.load(); } catch {}
+      startVideo(videoRef.current, base, current.audio_on !== false);
     } else {
       const durMs =
         Number(current.image_duration_ms) ||
         Number(current.duracao_ms) ||
         (Number(current.duracao_seg || 10) * 1000);
-
       const ms = Math.max(3000, durMs || 10000);
+      dlog('Imagem por', ms, 'ms');
       imgTimerRef.current = setTimeout(() => stopOverlay(true), ms);
     }
 
@@ -451,25 +423,20 @@ export default function Painel() {
       const tocarFluxo = async () => {
         try {
           await playWithFallback('/busina.mp3', { timeoutMs: 2000 }).catch(() => {});
-
-          const motor = new Audio('/motor.mp3');
-          motor.preload = 'auto'; motor.volume = 1;
+          const motor = new Audio('/motor.mp3'); motor.preload = 'auto'; motor.volume = 1;
 
           let halfTimer = null;
-          const halfPromise = new Promise((resolveHalf) => {
+          const halfPromise = new Promise((res) => {
             motor.addEventListener('loadedmetadata', () => {
               const half = ((motor.duration || 2) / 2) * 1000;
-              halfTimer = setTimeout(() => { new Audio('/freiada.mp3').play().catch(() => {}); resolveHalf(null); }, half);
+              halfTimer = setTimeout(() => { new Audio('/freiada.mp3').play().catch(() => {}); res(null); }, half);
             });
-            setTimeout(() => {
-              if (!halfTimer) { new Audio('/freiada.mp3').play().catch(() => {}); resolveHalf(null); }
-            }, 1200);
+            setTimeout(() => { if (!halfTimer) { new Audio('/freiada.mp3').play().catch(() => {}); res(null); } }, 1200);
           });
-
-          const endPromise = new Promise((resolveEnd) => {
-            motor.addEventListener('ended', () => resolveEnd(null));
-            motor.addEventListener('error', () => resolveEnd(null));
-            setTimeout(() => resolveEnd(null), 4000);
+          const endPromise = new Promise((res) => {
+            motor.addEventListener('ended', () => res(null));
+            motor.addEventListener('error', () => res(null));
+            setTimeout(() => res(null), 4000);
           });
 
           motor.play().catch(() => {});
@@ -479,20 +446,14 @@ export default function Painel() {
 
           await playWithFallback('/busina.mp3', { timeoutMs: 2500 }).catch(() => {});
 
-          const ajustarLetra = (letra) => {
-            const mapa = { Q: 'quê', W: 'dáblio', Y: 'ípsilon', E: 'é' };
-            return mapa[letra?.toUpperCase()] || letra?.toUpperCase();
-          };
-          const placaSeparada = (carro.placa || '')
-            .toString().toUpperCase().split('').map(ajustarLetra).join(' ');
-
+          const ajustarLetra = (L) => ({ Q: 'quê', W: 'dáblio', Y: 'ípsilon', E: 'é' }[L?.toUpperCase()] || L?.toUpperCase());
+          const placaSeparada = (carro.placa || '').toString().toUpperCase().split('').map(ajustarLetra).join(' ');
           const modeloCorrigido = corrigirPronunciaModelo(carro.modelo);
           const frase = `Serviço finalizado, Carro ${modeloCorrigido}, placa ${placaSeparada}, cor ${carro.cor}, dirija-se ao caixa. Obrigado pela preferência!`;
 
           const url = new URL(`${API_BASE}/api/tts`);
           url.searchParams.set('text', frase);
-          const tk = getToken();
-          if (tk) url.searchParams.set('token', tk);
+          const tk = getToken(); if (tk) url.searchParams.set('token', tk);
 
           const reason = await playUrl(url.toString(), { volume: 1, timeoutMs: 15000 });
           if (reason !== 'ended') {
@@ -507,9 +468,7 @@ export default function Painel() {
       if (audioOK) {
         tocarFluxo();
       } else {
-        const watch = setInterval(() => {
-          if (audioOK) { clearInterval(watch); tocarFluxo(); }
-        }, 250);
+        const watch = setInterval(() => { if (audioOK) { clearInterval(watch); tocarFluxo(); } }, 250);
         setTimeout(() => clearInterval(watch), 20000);
       }
 
@@ -651,7 +610,11 @@ export default function Painel() {
             <img
               className="media-el"
               alt={overlayItems[overlayIdx % overlayItems.length].titulo || 'mídia'}
-              src={getImgSrc(overlayItems[overlayIdx % overlayItems.length])}
+              src={(function () {
+                const it = overlayItems[overlayIdx % overlayItems.length];
+                const base = resolveBase(it);
+                return withCacheBuster(base);
+              })()}
             />
           )}
         </div>
