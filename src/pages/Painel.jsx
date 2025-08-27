@@ -27,8 +27,8 @@ export default function Painel() {
   const [carroFinalizado, setCarroFinalizado] = useState(null);
   const [emDestaque, setEmDestaque] = useState(false);
 
-  // Liberação de áudio: começa TRUE para não exigir clique de desbloqueio
-  const [audioOK, setAudioOK] = useState(true);
+  // Liberação de áudio
+  const [audioOK, setAudioOK] = useState(false);
   const unlockBtnRef = useRef(null);
 
   const intervaloRef = useRef(null);
@@ -143,6 +143,56 @@ export default function Painel() {
     return () => clearInterval(intervaloRef.current);
   }, [fila, carroFinalizado]);
 
+  // ================== Liberação de áudio ==================
+  const unlockAudio = async () => {
+    try {
+      // (1) TTS vazio ajuda a "ativar" subsistema de áudio em alguns ambientes
+      if ('speechSynthesis' in window) {
+        const u = new SpeechSynthesisUtterance(' ');
+        u.lang = 'pt-BR';
+        window.speechSynthesis.speak(u);
+      }
+      // (2) Play de áudio em volume zero (conta como engajamento em alguns devices)
+      const a = new Audio('/motor.mp3');
+      a.volume = 0.0;
+      await a.play().catch(() => {});
+      a.pause(); a.currentTime = 0;
+
+      setAudioOK(true);
+
+      // (3) Se houver vídeo atual, tenta desmutar agora
+      const v = videoRef.current;
+      if (v) {
+        try { v.muted = false; v.volume = 1; } catch {}
+        try { await v.play(); } catch {}
+      }
+    } catch {
+      setAudioOK(true);
+    }
+  };
+
+  // foca o botão para TVs
+  useEffect(() => {
+    if (!audioOK) {
+      const t0 = Date.now();
+      const tick = () => {
+        if (audioOK) return;
+        unlockBtnRef.current?.focus();
+        if (Date.now() - t0 < 1000) requestAnimationFrame(tick);
+      };
+      tick();
+    }
+  }, [audioOK]);
+
+  useEffect(() => {
+    const onKey = (e) => {
+      const ok = e.key === 'Enter' || e.key === 'NumpadEnter' || e.key === ' ' || e.keyCode === 13 || e.keyCode === 32;
+      if (!audioOK && ok) { e.preventDefault(); unlockAudio(); }
+    };
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
+  }, [audioOK]);
+
   // ================== Agendamento / Overlay ==================
   const parseMaybe = (s) => (s ? new Date(s).getTime() : null);
   const inDateWindow = (item, t) => {
@@ -235,17 +285,15 @@ export default function Painel() {
 
   const isVideoKind = (x) => String(x?.tipo || '').toUpperCase().startsWith('VID');
 
-  // Helpers de mídia
+  // Helpers de mídia (evita IIFE no JSX)
   const mediaBase = (it) => it.src || `${API_BASE}${it.url}`;
   const withCacheBuster = (base) => base + (base.includes('?') ? '&' : '?') + '_=' + Date.now();
 
-  // ============ PLAY de VÍDEO: anti-tela-preta + unmuted-first + retries ============
+  // ============ PLAY de VÍDEO: anti-tela-preta + auto-unmute/unmuted-first ============
   const startVideoWithSafeAutoplay = (videoEl, url) => {
     if (!videoEl) return;
 
-    // atributos seguros ANTES de definir src
-    videoEl.setAttribute('muted', '');   // importante: atributo já no DOM
-    videoEl.muted = true;
+    // atributos seguros
     videoEl.playsInline = true;
     videoEl.setAttribute('playsinline', '');
     videoEl.setAttribute('webkit-playsinline', '');
@@ -254,13 +302,13 @@ export default function Painel() {
     videoEl.disableRemotePlayback = true;
     videoEl.crossOrigin = 'anonymous';
 
+    // cache-buster
     const src = withCacheBuster(url);
 
-    // limpa handlers anteriores e estado
+    // limpa handlers anteriores
     videoEl.onended = null;
     videoEl.onerror = null;
     videoEl.onloadeddata = null;
-    videoEl.onloadedmetadata = null;
     videoEl.oncanplay = null;
     videoEl.onplaying = null;
     videoEl.onstalled = null;
@@ -277,7 +325,7 @@ export default function Painel() {
 
     const tryUnmuteIfAllowed = () => {
       if (VIDEO_AUDIO_ENABLED && audioOK) {
-        [0, 120, 600, 2000].forEach((ms) => {
+        [0,120,600,2000].forEach((ms) => {
           setTimeout(() => { try { videoEl.muted = false; videoEl.volume = 1; } catch {} }, ms);
         });
       }
@@ -304,26 +352,27 @@ export default function Painel() {
       videoEl.src = src2;
       try { videoEl.load(); } catch {}
       try { if (videoEl.currentTime === 0) videoEl.currentTime = 0.001; } catch {}
-      safePlay(false);
+      safePlay(false); // tenta novamente
     };
 
     const stopFail = () => { if (failTimer) { clearTimeout(failTimer); failTimer = null; } };
 
-    // tenta unmuted primeiro (se o device permitir, já sai com som); se falhar, toca mudo
+    // Tenta tocar DESMUTADO primeiro (se o device permitir, já sai com som)
+    // Se falhar, cai para mudo e toca mesmo assim.
     const safePlay = async (tryUnmutedFirst = true) => {
       try {
         if (tryUnmutedFirst) {
-          // tenta sem mudo
-          videoEl.muted = !(VIDEO_AUDIO_ENABLED);
+          videoEl.muted = !(VIDEO_AUDIO_ENABLED); // se flag ligada, tenta som; senão, mudo
         } else {
           videoEl.muted = true;
         }
         try { if (videoEl.currentTime === 0) videoEl.currentTime = 0.001; } catch {}
         await videoEl.play();
-        tryUnmuteIfAllowed(); // garante desmutar quando possível
+        // Se tocou, tenta garantir som (se permitido)
+        tryUnmuteIfAllowed();
       } catch {
         if (tryUnmutedFirst) {
-          // fallback: tocar mudo (sempre deve funcionar)
+          // fallback: tocar mudo
           try {
             videoEl.muted = true;
             await videoEl.play();
@@ -337,10 +386,6 @@ export default function Painel() {
       }
     };
 
-    videoEl.onloadedmetadata = () => {
-      // alguns devices precisam do seekzinho antes do play
-      try { if (videoEl.currentTime === 0) videoEl.currentTime = 0.001; } catch {}
-    };
     videoEl.onloadeddata = () => { safePlay(true); };
     videoEl.oncanplay = () => { if (videoEl.paused) safePlay(true); };
     videoEl.onplaying = () => { stopFail(); confirmFirstFrameOrRetry(); tryUnmuteIfAllowed(); };
@@ -348,14 +393,14 @@ export default function Painel() {
     videoEl.onended = () => stopOverlay(true);
     videoEl.onerror = () => stopOverlay(true);
 
-    // fail-safe: se em 8s não ficou "playing", fecha overlay (evita ficar preto)
+    // fail-safe global: se em 8s não ficou "playing", cancela para não “tela preta”
     failTimer = setTimeout(() => {
       if (videoEl.paused || videoEl.readyState < 2) stopOverlay(true);
     }, 8000);
   };
   // ========================================================================
 
-  // toca item atual
+  // toca item atual (vídeo começa tentando som; se bloquear, toca mudo e desmuta quando puder)
   useEffect(() => {
     if (!overlayOn) return;
     const items = visibleNow(nowMS());
@@ -423,7 +468,7 @@ export default function Painel() {
   const carroDestaque = carroFinalizado || fila[carroAtual];
   const overlayItems = useMemo(() => visibleNow(nowMS()), [playlist]);
 
-  // item atual do overlay + src cache-busted
+  // item atual do overlay (evita IIFE no JSX) + src cache-busted
   const currentOverlayItem =
     overlayOn && overlayItems.length > 0
       ? overlayItems[overlayIdx % overlayItems.length]
@@ -435,6 +480,30 @@ export default function Painel() {
 
   return (
     <div className="painel">
+      {/* OVERLAY DE PERMISSÃO */}
+      {!audioOK && (
+        <button
+          ref={unlockBtnRef}
+          autoFocus
+          onClick={unlockAudio}
+          onKeyDown={(e) => {
+            const ok = e.key === 'Enter' || e.key === 'NumpadEnter' || e.key === ' ' || e.keyCode === 13 || e.keyCode === 32;
+            if (ok) { e.preventDefault(); unlockAudio(); }
+          }}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 99999, background: 'rgba(0,0,0,0.85)',
+            color: '#0ff', fontSize: '3rem', fontWeight: 800, textShadow: '0 0 10px #0ff',
+            border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            flexDirection: 'column', gap: 8, padding: 20, cursor: 'pointer'
+          }}
+        >
+          <div>Pressione <u>OK</u> no controle</div>
+          <div style={{ fontSize: '1.4rem', color: '#9ff' }}>
+            para habilitar o áudio e a voz das chamadas
+          </div>
+        </button>
+      )}
+
       {/* TOPO */}
       <div className="topo">
         <div className="titulo" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -510,10 +579,9 @@ export default function Painel() {
 
       {/* OVERLAY DE MÍDIA */}
       {overlayOn && currentOverlayItem && (
-        <div className="media-overlay">
+        <div className="media-overlay" onClick={() => stopOverlay(true)}>
           {isVideoKind(currentOverlayItem) ? (
-            // >>> AQUI o vídeo já nasce com muted/playsInline/autoPlay no JSX <<<
-            <video ref={videoRef} className="media-el" muted playsInline autoPlay />
+            <video ref={videoRef} className="media-el" />
           ) : (
             <img
               className="media-el"
