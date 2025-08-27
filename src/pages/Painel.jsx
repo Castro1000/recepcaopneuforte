@@ -8,14 +8,14 @@ import { io } from 'socket.io-client';
 const API_BASE = 'https://recepcaopneuforte.onrender.com';
 // const API_BASE = 'http://localhost:3001';
 
-// Forçar som do vídeo quando permitido pelo navegador/dispositivo:
 const VIDEO_AUDIO_ENABLED = true;
+const DEBUG = false;
 
 // Socket
 const socket = io(API_BASE, { transports: ['websocket', 'polling'], reconnection: true });
 
 export default function Painel() {
-  // grava ?token=... no localStorage (facilita no Render)
+  // grava ?token=... no localStorage
   useEffect(() => {
     const t = new URLSearchParams(window.location.search).get('token');
     if (t) localStorage.setItem('token', t);
@@ -27,8 +27,9 @@ export default function Painel() {
   const [carroFinalizado, setCarroFinalizado] = useState(null);
   const [emDestaque, setEmDestaque] = useState(false);
 
-  // Liberação de áudio: deixamos true (não exige clique); se o device bloquear, tocamos mudo.
-  const [audioOK] = useState(true);
+  // Liberação de áudio (começa travado; “OK” libera)
+  const [audioOK, setAudioOK] = useState(false);
+  const unlockBtnRef = useRef(null);
 
   const intervaloRef = useRef(null);
   const timeoutDestaqueRef = useRef(null);
@@ -41,7 +42,7 @@ export default function Painel() {
   const videoRef = useRef(null);
   const imgTimerRef = useRef(null);
 
-  // suprimir reabertura no mesmo bloco
+  // janelas
   const suppressUntilRef = useRef(0);
   const overlayBlockEndRef = useRef(0);
 
@@ -99,17 +100,15 @@ export default function Painel() {
     try {
       let items = [];
       try {
-        const j = await fetchJson('/api/playlist'); // pode exigir token
+        const j = await fetchJson('/api/playlist');
         items = Array.isArray(j) ? j : Array.isArray(j?.items) ? j.items : [];
       } catch (e) {
         console.warn('playlist falhou:', e?.message || e);
       }
-
       if (!Array.isArray(items) || items.length === 0) {
-        const j2 = await fetchJson('/api/midia');   // fallback autenticado
+        const j2 = await fetchJson('/api/midia');
         items = Array.isArray(j2) ? j2 : [];
       }
-
       setPlaylist(normalize(items));
     } catch (e) {
       console.warn('Falha ao buscar playlist:', e);
@@ -143,6 +142,51 @@ export default function Painel() {
     return () => clearInterval(intervaloRef.current);
   }, [fila, carroFinalizado]);
 
+  // ============== Liberação de áudio (OK) ==============
+  const unlockAudio = async () => {
+    try {
+      // “toquezinho” de áudio 0 e TTS branco ajudam a liberar áudio
+      if ('speechSynthesis' in window) {
+        const u = new SpeechSynthesisUtterance(' ');
+        u.lang = 'pt-BR';
+        window.speechSynthesis.speak(u);
+      }
+      const a = new Audio('/motor.mp3');
+      a.volume = 0.0;
+      await a.play().catch(() => {});
+      a.pause(); a.currentTime = 0;
+
+      setAudioOK(true);
+
+      const v = videoRef.current;
+      if (v) { try { v.muted = false; v.volume = 1; await v.play(); } catch {} }
+    } catch {
+      setAudioOK(true);
+    }
+  };
+
+  // foca o botão (TV)
+  useEffect(() => {
+    if (!audioOK) {
+      const t0 = Date.now();
+      const tick = () => {
+        if (audioOK) return;
+        unlockBtnRef.current?.focus();
+        if (Date.now() - t0 < 1000) requestAnimationFrame(tick);
+      };
+      tick();
+    }
+  }, [audioOK]);
+
+  useEffect(() => {
+    const onKey = (e) => {
+      const ok = e.key === 'Enter' || e.key === 'NumpadEnter' || e.key === ' ' || e.keyCode === 13 || e.keyCode === 32;
+      if (!audioOK && ok) { e.preventDefault(); unlockAudio(); }
+    };
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
+  }, [audioOK]);
+
   // ================== Agendamento / Overlay ==================
   const parseMaybe = (s) => (s ? new Date(s).getTime() : null);
   const inDateWindow = (item, t) => {
@@ -152,7 +196,6 @@ export default function Painel() {
     if (fim && t > fim) return false;
     return true;
   };
-
   const isActive = (x) => (x?.ativo == null ? 1 : Number(x.ativo)) === 1;
 
   const visibleNow = (t) =>
@@ -172,35 +215,28 @@ export default function Painel() {
     const base = anchorMs(it);
     return Math.floor((t - base) / iv) * iv + base;
   };
-
   const inIntervalWindow = (it, t, wndSec) => {
     const iv = ivMs(it);
     if (iv <= 0) return true;
     const bs = blockStart(it, t);
     return t >= bs && (t - bs) < wndSec * 1000;
   };
-
   const mustOpenOverlayNow = (t) =>
     visibleNow(t).some((it) => inIntervalWindow(it, t, windowSec));
 
-  // tick imediato + a cada 500ms
   useEffect(() => {
     const tick = () => {
       const t = nowMS();
       if (t < suppressUntilRef.current) return;
 
-      if (carroFinalizado) {
-        if (overlayOn) stopOverlay(false);
-        return;
-      }
-
+      // **NÃO** bloqueia overlay quando finalizado: só destaca carro, mídia pode tocar.
       if (mustOpenOverlayNow(t)) {
         if (!overlayOn) startOverlay(t);
       } else {
         if (overlayOn) stopOverlay(false);
       }
     };
-    // roda já na montagem/alteração (evita “ficar esperando”)
+    // roda já na mudança
     tick();
     const id = setInterval(tick, 500);
     return () => clearInterval(id);
@@ -222,6 +258,7 @@ export default function Painel() {
     } else {
       overlayBlockEndRef.current = tStart + windowSec * 1000;
     }
+    if (DEBUG) console.log('[overlay] start', { tStart, ref });
   };
 
   const stopOverlay = (closeAndSuppress = true) => {
@@ -234,22 +271,23 @@ export default function Painel() {
     if (closeAndSuppress) {
       suppressUntilRef.current = Math.max(suppressUntilRef.current, overlayBlockEndRef.current || 0);
     }
+    if (DEBUG) console.log('[overlay] stop', { closeAndSuppress });
   };
 
   const isVideoKind = (x) => String(x?.tipo || '').toUpperCase().startsWith('VID');
 
-  // --------- resolver URL (corrige prefixo quando já é http/https) ---------
+  // --------- resolver URL (não prefixa se já for absoluta) ---------
   const resolveSrc = (it) => {
     const raw = it?.src || it?.url || '';
     if (!raw) return '';
-    if (/^https?:\/\//i.test(raw)) return raw;           // já é absoluta
+    if (/^https?:\/\//i.test(raw)) return raw;           // absoluta
     const path = raw.startsWith('/') ? raw : `/${raw}`;  // garante barra
     return `${API_BASE}${path}`;
   };
   const withCacheBuster = (base) =>
     base + (base.includes('?') ? '&' : '?') + '_=' + Date.now();
 
-  // ============ PLAY de VÍDEO: anti-tela-preta + unmuted-first + retries ============
+  // ============ PLAY de VÍDEO: estável + unmuted-first + retries ============
   const startVideoWithSafeAutoplay = (videoEl, url, wantsSound) => {
     if (!videoEl || !url) return;
 
@@ -266,7 +304,7 @@ export default function Painel() {
 
     const src = withCacheBuster(url);
 
-    // limpa handlers anteriores e estado
+    // limpa handlers e estado
     videoEl.onended = null;
     videoEl.onerror = null;
     videoEl.onloadeddata = null;
@@ -274,7 +312,6 @@ export default function Painel() {
     videoEl.oncanplay = null;
     videoEl.onplaying = null;
     videoEl.onstalled = null;
-    videoEl.onwaiting = null;
 
     try { videoEl.pause(); } catch {}
     try { videoEl.removeAttribute('src'); } catch {}
@@ -286,10 +323,10 @@ export default function Painel() {
     let failTimer = null;
     let retriedOnce = false;
 
-    const wantAudio = VIDEO_AUDIO_ENABLED && wantsSound;
+    const wantAudio = VIDEO_AUDIO_ENABLED && (wantsSound !== false);
+
     const tryUnmuteIfAllowed = () => {
-      if (!wantAudio) return;
-      // se o device permitir, já sai com som
+      if (!wantAudio || !audioOK) return;
       [0, 150, 600, 2000].forEach((ms) => {
         setTimeout(() => { try { videoEl.muted = false; videoEl.volume = 1; } catch {} }, ms);
       });
@@ -311,10 +348,10 @@ export default function Painel() {
 
     const stopFail = () => { if (failTimer) { clearTimeout(failTimer); failTimer = null; } };
 
-    // tenta unmuted primeiro; se o navegador bloquear, cai pra mudo automaticamente
+    // tenta unmuted primeiro (se device permitir e audioOK, já sai com som); senão, mudo
     const safePlay = async (tryUnmutedFirst = true) => {
       try {
-        videoEl.muted = tryUnmutedFirst ? !wantAudio : true;
+        videoEl.muted = tryUnmutedFirst ? !(wantAudio && audioOK) : true;
         try { if (videoEl.currentTime === 0) videoEl.currentTime = 0.001; } catch {}
         await videoEl.play();
         tryUnmuteIfAllowed();
@@ -339,19 +376,18 @@ export default function Painel() {
     videoEl.onloadeddata = () => safePlay(true);
     videoEl.oncanplay = () => { if (videoEl.paused) safePlay(true); };
     videoEl.onplaying = () => { stopFail(); tryUnmuteIfAllowed(); };
-    videoEl.onwaiting = () => { /* rede lenta → deixa tocar mudo; retry se travar demais */ };
     videoEl.onstalled = () => retryWithNewSrc();
     videoEl.onended = () => stopOverlay(true);
     videoEl.onerror = () => stopOverlay(true);
 
-    // fail-safe: se em 8s não ficou "playing", fecha overlay (evita ficar preso)
+    // fail-safe: 8s sem playing → fecha overlay (não fica “preso”)
     failTimer = setTimeout(() => {
       if (videoEl.paused || videoEl.readyState < 2) stopOverlay(true);
     }, 8000);
   };
   // ========================================================================
 
-  // toca item atual
+  // toca item atual quando overlay abre
   useEffect(() => {
     if (!overlayOn) return;
     const items = visibleNow(nowMS());
@@ -362,15 +398,15 @@ export default function Painel() {
     if (imgTimerRef.current) { clearTimeout(imgTimerRef.current); imgTimerRef.current = null; }
 
     const base = resolveSrc(current);
+    if (DEBUG) console.log('[overlay] tocando', current);
 
     if (isVideoKind(current)) {
-      startVideoWithSafeAutoplay(videoRef.current, base, current.audio_on !== false);
+      startVideoWithSafeAutoplay(videoRef.current, base, current.audio_on);
     } else {
       const durMs =
         Number(current.image_duration_ms) ||
         Number(current.duracao_ms) ||
         (Number(current.duracao_seg || 10) * 1000);
-
       const ms = Math.max(3000, durMs || 10000);
       imgTimerRef.current = setTimeout(() => stopOverlay(true), ms);
     }
@@ -379,14 +415,19 @@ export default function Painel() {
       if (imgTimerRef.current) { clearTimeout(imgTimerRef.current); imgTimerRef.current = null; }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [overlayOn, overlayIdx]);
+  }, [overlayOn, overlayIdx, audioOK]);
 
   // ================== Sockets (finalização + novo carro) ==================
   useEffect(() => {
     const onCarroFinalizado = async (carro) => {
-      stopOverlay(true);
+      // Mostra destaque, mas NÃO bloqueia a mídia
       setCarroFinalizado(carro);
       setEmDestaque(true);
+      if (timeoutDestaqueRef.current) clearTimeout(timeoutDestaqueRef.current);
+      timeoutDestaqueRef.current = setTimeout(() => {
+        setEmDestaque(false);
+        setCarroFinalizado(null);
+      }, 10000);
 
       setFila((prev) => {
         const nova = prev.filter((c) => c.id !== carro.id);
@@ -397,7 +438,9 @@ export default function Painel() {
 
     const onNovoCarroAdicionado = () => {
       buscarFila();
-      stopOverlay(true);
+      // reavalia overlay
+      setOverlayOn(false);
+      setTimeout(() => setOverlayOn(true), 50);
     };
 
     socket.on('carroFinalizado', onCarroFinalizado);
@@ -417,7 +460,7 @@ export default function Painel() {
   const carroDestaque = carroFinalizado || fila[carroAtual];
   const overlayItems = useMemo(() => visibleNow(nowMS()), [playlist]);
 
-  // item atual do overlay + src cache-busted
+  // item atual + src cache-busted
   const currentOverlayItem =
     overlayOn && overlayItems.length > 0
       ? overlayItems[overlayIdx % overlayItems.length]
@@ -429,6 +472,30 @@ export default function Painel() {
 
   return (
     <div className="painel">
+      {/* OVERLAY DE PERMISSÃO (voltou) */}
+      {!audioOK && (
+        <button
+          ref={unlockBtnRef}
+          autoFocus
+          onClick={unlockAudio}
+          onKeyDown={(e) => {
+            const ok = e.key === 'Enter' || e.key === 'NumpadEnter' || e.key === ' ' || e.keyCode === 13 || e.keyCode === 32;
+            if (ok) { e.preventDefault(); unlockAudio(); }
+          }}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 99999, background: 'rgba(0,0,0,0.85)',
+            color: '#0ff', fontSize: '3rem', fontWeight: 800, textShadow: '0 0 10px #0ff',
+            border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            flexDirection: 'column', gap: 8, padding: 20, cursor: 'pointer'
+          }}
+        >
+          <div>Pressione <u>OK</u> no controle</div>
+          <div style={{ fontSize: '1.4rem', color: '#9ff' }}>
+            para habilitar o áudio e a voz das chamadas
+          </div>
+        </button>
+      )}
+
       {/* TOPO */}
       <div className="topo">
         <div className="titulo" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
