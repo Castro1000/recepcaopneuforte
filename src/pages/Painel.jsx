@@ -8,7 +8,7 @@ import { io } from 'socket.io-client';
 const API_BASE = 'https://recepcaopneuforte.onrender.com';
 // const API_BASE = 'http://localhost:3001';
 
-// Se quiser forçar som do vídeo quando permitido:
+// Forçar som do vídeo quando permitido pelo navegador/dispositivo:
 const VIDEO_AUDIO_ENABLED = true;
 
 // Socket
@@ -146,28 +146,26 @@ export default function Painel() {
   // ================== Liberação de áudio ==================
   const unlockAudio = async () => {
     try {
-      // 1) toca um áudio em volume 0 para “ativar” áudio do site
-      const a = new Audio('/motor.mp3');
-      a.volume = 0;
-      await a.play().catch(() => {});
-      a.pause(); a.currentTime = 0;
-
-      // 2) dispara TTS “vazio” (reforça a ativação)
+      // (1) TTS vazio ajuda a "ativar" subsistema de áudio em alguns ambientes
       if ('speechSynthesis' in window) {
         const u = new SpeechSynthesisUtterance(' ');
         u.lang = 'pt-BR';
         window.speechSynthesis.speak(u);
       }
-
-      // 3) se existir um vídeo aberto, tenta tocar já desmutando depois
-      const v = videoRef.current;
-      if (v && overlayOn) {
-        // começa mudo (sempre) e desmuta em seguida (ver abaixo)
-        v.muted = true;
-        try { await v.play(); } catch {}
-      }
+      // (2) Play de áudio em volume zero (conta como engajamento em alguns devices)
+      const a = new Audio('/motor.mp3');
+      a.volume = 0.0;
+      await a.play().catch(() => {});
+      a.pause(); a.currentTime = 0;
 
       setAudioOK(true);
+
+      // (3) Se houver vídeo atual, tenta desmutar agora
+      const v = videoRef.current;
+      if (v) {
+        try { v.muted = false; v.volume = 1; } catch {}
+        try { await v.play(); } catch {}
+      }
     } catch {
       setAudioOK(true);
     }
@@ -287,13 +285,15 @@ export default function Painel() {
 
   const isVideoKind = (x) => String(x?.tipo || '').toUpperCase().startsWith('VID');
 
-  // ============ PLAY de VÍDEO: começa mudo e desmuta em seguida ============
+  // Helpers de mídia (evita IIFE no JSX)
+  const mediaBase = (it) => it.src || `${API_BASE}${it.url}`;
+  const withCacheBuster = (base) => base + (base.includes('?') ? '&' : '?') + '_=' + Date.now();
+
+  // ============ PLAY de VÍDEO: anti-tela-preta + auto-unmute/unmuted-first ============
   const startVideoWithSafeAutoplay = (videoEl, url) => {
     if (!videoEl) return;
 
-    // Always start muted to satisfy autoplay.
-    videoEl.muted = true;
-    videoEl.setAttribute('muted', ''); // garante atributo
+    // atributos seguros
     videoEl.playsInline = true;
     videoEl.setAttribute('playsinline', '');
     videoEl.setAttribute('webkit-playsinline', '');
@@ -303,47 +303,104 @@ export default function Painel() {
     videoEl.crossOrigin = 'anonymous';
 
     // cache-buster
-    const mediaSrc = url + (url.includes('?') ? '&' : '?') + '_=' + Date.now();
+    const src = withCacheBuster(url);
 
-    // limpa listeners antigos
+    // limpa handlers anteriores
     videoEl.onended = null;
     videoEl.onerror = null;
     videoEl.onloadeddata = null;
+    videoEl.oncanplay = null;
     videoEl.onplaying = null;
+    videoEl.onstalled = null;
 
-    // define src e força load
-    videoEl.src = mediaSrc;
+    try { videoEl.pause(); } catch {}
+    try { videoEl.removeAttribute('src'); } catch {}
     try { videoEl.load(); } catch {}
 
-    // se tocar, remove o mudo em seguida (somente se permitido)
-    const unmuteIfAllowed = () => {
+    videoEl.src = src;
+    try { videoEl.load(); } catch {}
+
+    let failTimer = null;
+    let retriedOnce = false;
+
+    const tryUnmuteIfAllowed = () => {
       if (VIDEO_AUDIO_ENABLED && audioOK) {
-        // pequeno delay ajuda no iOS/Chrome TV
-        setTimeout(() => {
-          try { videoEl.muted = false; videoEl.volume = 1; } catch {}
-        }, 120);
+        [0,120,600,2000].forEach((ms) => {
+          setTimeout(() => { try { videoEl.muted = false; videoEl.volume = 1; } catch {} }, ms);
+        });
       }
     };
 
-    // fallback: se não "playing" em X segundos, fecha overlay para não ficar preto
-    const failTimer = setTimeout(() => stopOverlay(true), 8000);
+    const confirmFirstFrameOrRetry = () => {
+      if ('requestVideoFrameCallback' in videoEl) {
+        try {
+          videoEl.requestVideoFrameCallback((_now, meta) => {
+            if (!meta || meta.presentedFrames === 0) retryWithNewSrc();
+          });
+        } catch {}
+      }
+    };
 
-    videoEl.onplaying = () => { clearTimeout(failTimer); unmuteIfAllowed(); };
+    const retryWithNewSrc = () => {
+      if (retriedOnce) return;
+      retriedOnce = true;
+      try { videoEl.pause(); } catch {}
+      try { videoEl.removeAttribute('src'); } catch {}
+      try { videoEl.load(); } catch {}
+
+      const src2 = withCacheBuster(url);
+      videoEl.src = src2;
+      try { videoEl.load(); } catch {}
+      try { if (videoEl.currentTime === 0) videoEl.currentTime = 0.001; } catch {}
+      safePlay(false); // tenta novamente
+    };
+
+    const stopFail = () => { if (failTimer) { clearTimeout(failTimer); failTimer = null; } };
+
+    // Tenta tocar DESMUTADO primeiro (se o device permitir, já sai com som)
+    // Se falhar, cai para mudo e toca mesmo assim.
+    const safePlay = async (tryUnmutedFirst = true) => {
+      try {
+        if (tryUnmutedFirst) {
+          videoEl.muted = !(VIDEO_AUDIO_ENABLED); // se flag ligada, tenta som; senão, mudo
+        } else {
+          videoEl.muted = true;
+        }
+        try { if (videoEl.currentTime === 0) videoEl.currentTime = 0.001; } catch {}
+        await videoEl.play();
+        // Se tocou, tenta garantir som (se permitido)
+        tryUnmuteIfAllowed();
+      } catch {
+        if (tryUnmutedFirst) {
+          // fallback: tocar mudo
+          try {
+            videoEl.muted = true;
+            await videoEl.play();
+            tryUnmuteIfAllowed();
+          } catch {
+            stopOverlay(true);
+          }
+        } else {
+          stopOverlay(true);
+        }
+      }
+    };
+
+    videoEl.onloadeddata = () => { safePlay(true); };
+    videoEl.oncanplay = () => { if (videoEl.paused) safePlay(true); };
+    videoEl.onplaying = () => { stopFail(); confirmFirstFrameOrRetry(); tryUnmuteIfAllowed(); };
+    videoEl.onstalled = () => { retryWithNewSrc(); };
     videoEl.onended = () => stopOverlay(true);
     videoEl.onerror = () => stopOverlay(true);
 
-    // tenta tocar assim que tiver dados
-    videoEl.onloadeddata = () => {
-      videoEl.play().then(unmuteIfAllowed).catch(() => {
-        // última tentativa: tocar mudo mesmo
-        videoEl.muted = true;
-        videoEl.play().catch(() => stopOverlay(true));
-      });
-    };
+    // fail-safe global: se em 8s não ficou "playing", cancela para não “tela preta”
+    failTimer = setTimeout(() => {
+      if (videoEl.paused || videoEl.readyState < 2) stopOverlay(true);
+    }, 8000);
   };
   // ========================================================================
 
-  // toca item atual (vídeo começa mudo e desmuta)
+  // toca item atual (vídeo começa tentando som; se bloquear, toca mudo e desmuta quando puder)
   useEffect(() => {
     if (!overlayOn) return;
     const items = visibleNow(nowMS());
@@ -353,7 +410,7 @@ export default function Painel() {
 
     if (imgTimerRef.current) { clearTimeout(imgTimerRef.current); imgTimerRef.current = null; }
 
-    const base = current.src || `${API_BASE}${current.url}`;
+    const base = mediaBase(current);
 
     if (isVideoKind(current)) {
       startVideoWithSafeAutoplay(videoRef.current, base);
@@ -386,8 +443,6 @@ export default function Painel() {
         setCarroAtual((idx) => (idx >= nova.length ? 0 : idx));
         return nova;
       });
-
-      // (fluxo de áudio/voz pode ser adicionado aqui se desejar)
     };
 
     const onNovoCarroAdicionado = () => {
@@ -412,6 +467,16 @@ export default function Painel() {
 
   const carroDestaque = carroFinalizado || fila[carroAtual];
   const overlayItems = useMemo(() => visibleNow(nowMS()), [playlist]);
+
+  // item atual do overlay (evita IIFE no JSX) + src cache-busted
+  const currentOverlayItem =
+    overlayOn && overlayItems.length > 0
+      ? overlayItems[overlayIdx % overlayItems.length]
+      : null;
+
+  const currentImgSrc = currentOverlayItem && !isVideoKind(currentOverlayItem)
+    ? withCacheBuster(mediaBase(currentOverlayItem))
+    : null;
 
   return (
     <div className="painel">
@@ -513,19 +578,15 @@ export default function Painel() {
       </div>
 
       {/* OVERLAY DE MÍDIA */}
-      {overlayOn && overlayItems.length > 0 && (
+      {overlayOn && currentOverlayItem && (
         <div className="media-overlay" onClick={() => stopOverlay(true)}>
-          {isVideoKind(overlayItems[overlayIdx % overlayItems.length]) ? (
+          {isVideoKind(currentOverlayItem) ? (
             <video ref={videoRef} className="media-el" />
           ) : (
             <img
               className="media-el"
-              alt={overlayItems[overlayIdx % overlayItems.length].titulo || 'mídia'}
-              src={() => {
-                const it = overlayItems[overlayIdx % overlayItems.length];
-                const base = it.src || `${API_BASE}${it.url}`;
-                return base + (base.includes('?') ? '&' : '?') + '_=' + Date.now();
-              }()}
+              alt={currentOverlayItem.titulo || 'mídia'}
+              src={currentImgSrc || ''}
             />
           )}
         </div>
