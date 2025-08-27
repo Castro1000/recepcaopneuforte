@@ -1,3 +1,4 @@
+// src/pages/Painel.jsx
 import './Painel.css';
 import axios from 'axios';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -7,7 +8,7 @@ import { io } from 'socket.io-client';
 const API_BASE = 'https://recepcaopneuforte.onrender.com';
 // const API_BASE = 'http://localhost:3001';
 
-const socket = io(API_BASE);
+const socket = io(API_BASE, { transports: ['websocket', 'polling'], reconnection: true });
 
 export default function Painel() {
   // grava ?token=... no localStorage (útil no Render)
@@ -41,12 +42,11 @@ export default function Painel() {
   const suppressUntilRef = useRef(0);
   const overlayBlockEndRef = useRef(0);
 
-  // headers sempre com o token mais recente
-  const getAuthHeaders = () => {
-    const TOKEN = (localStorage.getItem('token') || '').trim();
-    return TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {};
-  };
   const getToken = () => (localStorage.getItem('token') || '').trim();
+  const getAuthHeaders = () => {
+    const tk = getToken();
+    return tk ? { Authorization: `Bearer ${tk}` } : {};
+  };
 
   const montaServicos = (c) =>
     [c?.servico, c?.servico2, c?.servico3].filter(Boolean).join(' | ');
@@ -63,22 +63,30 @@ export default function Painel() {
     }
   };
 
-  // ------- Helpers de fetch JSON com token -------
-  const fetchJson = async (path) => {
-    const r = await fetch(`${API_BASE}${path}`, { cache: 'no-store', headers: getAuthHeaders() });
-    if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
-    return r.json();
+  // ------- Helpers de fetch JSON (com fallback ?token=) -------
+  const fetchFirstOk = async (paths) => {
+    for (const path of paths) {
+      try {
+        const url = path.startsWith('http') ? path : `${API_BASE}${path}`;
+        const r = await fetch(url, { cache: 'no-store', headers: getAuthHeaders() });
+        if (!r.ok) throw new Error(String(r.status));
+        return await r.json();
+      } catch (e) {
+        console.warn('fetch falhou:', path, e?.message || e);
+      }
+    }
+    return null;
   };
 
   // ------- Normalização de mídia/playlist -------
-  const normalize = (arr) => {
-    return (arr || []).map((m) => {
+  const normalize = (arr) =>
+    (arr || []).map((m) => {
       const tipoRaw = String(m.tipo || '').toUpperCase();
       return {
         id: m.id,
         url: m.url,
         src: m.src,
-        tipo: tipoRaw,                       // "IMG" | "VIDEO"
+        tipo: tipoRaw,                       // "IMG" | "VIDEO"/"VID"
         titulo: m.titulo || '',
         data_inicio: m.data_inicio || null,
         data_fim: m.data_fim || null,
@@ -89,25 +97,25 @@ export default function Painel() {
           (m.duracao_seg ? Number(m.duracao_seg) * 1000 : undefined),
         ord: Number(m.ord ?? 0),
         ativo: m.ativo == null ? 1 : Number(m.ativo),
+        audio_on: m.audio_on ?? true,
       };
     });
-  };
 
-  // ------- Buscar playlist (com fallback para /api/midia) -------
+  // ------- Buscar playlist (tenta Authorization e ?token=) -------
   const fetchPlaylist = async () => {
     try {
-      let items = [];
-      try {
-        const j = await fetchJson('/api/playlist'); // se precisar, usa token
-        items = Array.isArray(j) ? j : Array.isArray(j?.items) ? j.items : [];
-      } catch (e) {
-        console.warn('playlist falhou:', e?.message || e);
-      }
+      const tk = getToken();
+      const itemsJson =
+        (await fetchFirstOk([
+          '/api/playlist',
+          `/api/playlist?token=${encodeURIComponent(tk)}`,
+          '/api/midia',
+          `/api/midia?token=${encodeURIComponent(tk)}`
+        ])) || [];
 
-      if (!Array.isArray(items) || items.length === 0) {
-        const j2 = await fetchJson('/api/midia');   // fallback autenticado
-        items = Array.isArray(j2) ? j2 : [];
-      }
+      const items = Array.isArray(itemsJson)
+        ? itemsJson
+        : Array.isArray(itemsJson?.items) ? itemsJson.items : [];
 
       setPlaylist(normalize(items));
     } catch (e) {
@@ -155,6 +163,12 @@ export default function Painel() {
         window.speechSynthesis.speak(u);
       }
       setAudioOK(true);
+
+      // Se um vídeo já estiver tocando, desmuta
+      const v = videoRef.current;
+      if (v && !v.paused) {
+        try { v.muted = false; v.volume = 1; await v.play(); } catch {}
+      }
     } catch { setAudioOK(true); }
   };
   useEffect(() => {
@@ -295,6 +309,7 @@ export default function Painel() {
         if (overlayOn) stopOverlay(false);
       }
     };
+    tick(); // roda já
     const id = setInterval(tick, 500);
     return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -331,13 +346,31 @@ export default function Painel() {
 
   const isVideoKind = (x) => String(x?.tipo || '').toUpperCase().startsWith('VID');
 
-  // helper: src da imagem com cache-buster
-  const getImgSrc = (it) => {
-    const base = it.src || `${API_BASE}${it.url}`;
-    return base + (base.includes('?') ? '&' : '?') + '_=' + Date.now();
-    // (sem IIFE aqui — compatível com o build do Vite)
+  // --------- Resolvedores de URL ---------
+  const resolveBase = (it) => {
+    const raw = it?.src || it?.url || '';
+    if (!raw) return '';
+    if (/^https?:\/\//i.test(raw)) return raw;              // já absoluta
+    const path = raw.startsWith('/') ? raw : `/${raw}`;     // relativa → API_BASE
+    return `${API_BASE}${path}`;
   };
 
+  // helper: src da imagem com cache-buster
+  const getImgSrc = (it) => {
+    const base = resolveBase(it);
+    return base + (base.includes('?') ? '&' : '?') + '_=' + Date.now();
+  };
+
+  // quando o áudio for liberado, desmuta o vídeo que já estiver tocando
+  useEffect(() => {
+    if (!audioOK) return;
+    const v = videoRef.current;
+    if (v && !v.paused) {
+      try { v.muted = false; v.volume = 1; v.play(); } catch {}
+    }
+  }, [audioOK, overlayOn]);
+
+  // tocar item atual (vídeo começa mudo e desmuta ao liberar áudio)
   useEffect(() => {
     if (!overlayOn) return;
     const items = visibleNow(nowMS());
@@ -347,25 +380,43 @@ export default function Painel() {
 
     if (imgTimerRef.current) { clearTimeout(imgTimerRef.current); imgTimerRef.current = null; }
 
-    const src = current.src || `${API_BASE}${current.url}`;
-    const mediaSrc = src + (src.includes('?') ? '&' : '?') + '_=' + Date.now();
+    const base = resolveBase(current);
+    if (!base) { stopOverlay(true); return; }
 
     if (isVideoKind(current)) {
       const v = videoRef.current;
       if (!v) return;
+
+      // atributos antes do src (autoplay seguro)
+      v.setAttribute('muted', '');
+      v.setAttribute('playsinline', '');
+      v.setAttribute('webkit-playsinline', '');
       v.muted = true;
       v.playsInline = true;
       v.autoplay = true;
       v.preload = 'auto';
-      v.crossOrigin = 'anonymous';
-      v.src = mediaSrc;
+      // v.crossOrigin = 'anonymous'; // evite se o host não expõe CORS
 
+      const mediaSrc = base + (base.includes('?') ? '&' : '?') + '_=' + Date.now();
       v.onended = () => stopOverlay(true);
       v.onerror = () => stopOverlay(true);
-      v.onloadeddata = () => { v.play().catch(() => stopOverlay(true)); };
 
       const failTimer = setTimeout(() => stopOverlay(true), 8000);
-      v.onplaying = () => clearTimeout(failTimer);
+      v.onplaying = () => {
+        clearTimeout(failTimer);
+        if (audioOK) { try { v.muted = false; v.volume = 1; } catch {} }
+      };
+
+      v.onloadeddata = () => {
+        v.play().then(() => {
+          if (audioOK) { try { v.muted = false; v.volume = 1; } catch {} }
+        }).catch(() => stopOverlay(true));
+      };
+
+      try { v.pause(); } catch {}
+      try { v.removeAttribute('src'); v.load(); } catch {}
+      v.src = mediaSrc;
+      try { v.load(); } catch {}
     } else {
       const durMs =
         Number(current.image_duration_ms) ||
@@ -380,7 +431,7 @@ export default function Painel() {
       if (imgTimerRef.current) { clearTimeout(imgTimerRef.current); imgTimerRef.current = null; }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [overlayOn, overlayIdx]);
+  }, [overlayOn, overlayIdx, audioOK]);
 
   // ================== Sockets (finalização + novo carro) ==================
   useEffect(() => {
@@ -396,13 +447,11 @@ export default function Painel() {
         return nova;
       });
 
-      // --- FLUXO DE ÁUDIO / TTS ---
+      // --- FLUXO DE ÁUDIO / TTS (mantido) ---
       const tocarFluxo = async () => {
         try {
-          // 1) buzina
           await playWithFallback('/busina.mp3', { timeoutMs: 2000 }).catch(() => {});
 
-          // 2) motor + freio no meio
           const motor = new Audio('/motor.mp3');
           motor.preload = 'auto'; motor.volume = 1;
 
@@ -412,7 +461,6 @@ export default function Painel() {
               const half = ((motor.duration || 2) / 2) * 1000;
               halfTimer = setTimeout(() => { new Audio('/freiada.mp3').play().catch(() => {}); resolveHalf(null); }, half);
             });
-            // fallback: se metadata não vier
             setTimeout(() => {
               if (!halfTimer) { new Audio('/freiada.mp3').play().catch(() => {}); resolveHalf(null); }
             }, 1200);
@@ -429,10 +477,8 @@ export default function Painel() {
           clearTimeout(halfTimer);
           await halfPromise;
 
-          // 3) buzina de novo
           await playWithFallback('/busina.mp3', { timeoutMs: 2500 }).catch(() => {});
 
-          // 4) TTS (com fallback para speechSynthesis)
           const ajustarLetra = (letra) => {
             const mapa = { Q: 'quê', W: 'dáblio', Y: 'ípsilon', E: 'é' };
             return mapa[letra?.toUpperCase()] || letra?.toUpperCase();
@@ -446,10 +492,9 @@ export default function Painel() {
           const url = new URL(`${API_BASE}/api/tts`);
           url.searchParams.set('text', frase);
           const tk = getToken();
-          if (tk) url.searchParams.set('token', tk); // caso seu backend aceite
+          if (tk) url.searchParams.set('token', tk);
 
           const reason = await playUrl(url.toString(), { volume: 1, timeoutMs: 15000 });
-
           if (reason !== 'ended') {
             const ok = speak(frase);
             if (!ok) await playWithFallback('/busina.mp3', { timeoutMs: 1500 }).catch(() => {});
@@ -462,7 +507,6 @@ export default function Painel() {
       if (audioOK) {
         tocarFluxo();
       } else {
-        // espera liberação de áudio por até 20s
         const watch = setInterval(() => {
           if (audioOK) { clearInterval(watch); tocarFluxo(); }
         }, 250);
@@ -602,7 +646,7 @@ export default function Painel() {
       {overlayOn && overlayItems.length > 0 && (
         <div className="media-overlay" onClick={() => stopOverlay(true)}>
           {isVideoKind(overlayItems[overlayIdx % overlayItems.length]) ? (
-            <video ref={videoRef} className="media-el" />
+            <video ref={videoRef} className="media-el" muted playsInline autoPlay />
           ) : (
             <img
               className="media-el"
