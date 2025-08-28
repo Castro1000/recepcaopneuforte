@@ -8,17 +8,14 @@ import { io } from 'socket.io-client';
 const API_BASE = 'https://recepcaopneuforte.onrender.com';
 // const API_BASE = 'http://localhost:3001';
 
-// Socket
-const socket = io(API_BASE, { transports: ['websocket', 'polling'], reconnection: true });
+// Forçar som do vídeo quando permitido pelo navegador/dispositivo:
+const VIDEO_AUDIO_ENABLED = true;
 
-// Flags por querystring
-const URLQS = new URLSearchParams(window.location.search);
-const DEBUG = URLQS.has('debug');
-const FORCE_SHOW = URLQS.has('show'); // força overlay abrir se houver item ativo
-const dlog = (...a) => { if (DEBUG) console.log('[Painel]', ...a); };
+// Socket
+const socket = io(API_BASE, { transports: ['websocket', 'polling'] });
 
 export default function Painel() {
-  // grava ?token=... no localStorage (útil no Render)
+  // grava ?token=... no localStorage (facilita no Render)
   useEffect(() => {
     const t = new URLSearchParams(window.location.search).get('token');
     if (t) localStorage.setItem('token', t);
@@ -30,8 +27,8 @@ export default function Painel() {
   const [carroFinalizado, setCarroFinalizado] = useState(null);
   const [emDestaque, setEmDestaque] = useState(false);
 
-  // Liberação de áudio
-  const [audioOK, setAudioOK] = useState(false);
+  // Liberação de áudio: começa TRUE para não exigir clique de desbloqueio
+  const [audioOK, setAudioOK] = useState(true);
   const unlockBtnRef = useRef(null);
 
   const intervaloRef = useRef(null);
@@ -45,15 +42,12 @@ export default function Painel() {
   const videoRef = useRef(null);
   const imgTimerRef = useRef(null);
 
-  // janelas
+  // suprimir reabertura no mesmo bloco
   const suppressUntilRef = useRef(0);
   const overlayBlockEndRef = useRef(0);
 
-  const getToken = () => (localStorage.getItem('token') || '').trim();
-  const getAuthHeaders = () => {
-    const tk = getToken();
-    return tk ? { Authorization: `Bearer ${tk}` } : {};
-  };
+  const TOKEN = (localStorage.getItem('token') || '').trim();
+  const authHeaders = TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {};
 
   const montaServicos = (c) =>
     [c?.servico, c?.servico2, c?.servico3].filter(Boolean).join(' | ');
@@ -70,25 +64,17 @@ export default function Painel() {
     }
   };
 
-  // ------- Fetch JSON (Authorization + fallback ?token=) -------
-  const fetchFirstOk = async (paths) => {
-    for (const path of paths) {
-      try {
-        const url = path.startsWith('http') ? path : `${API_BASE}${path}`;
-        const r = await fetch(url, { cache: 'no-store', headers: getAuthHeaders() });
-        if (!r.ok) throw new Error(String(r.status));
-        return await r.json();
-      } catch (e) {
-        dlog('fetch falhou:', path, e?.message || e);
-      }
-    }
-    return null;
+  // ------- Helpers de fetch JSON com token -------
+  const fetchJson = async (path) => {
+    const r = await fetch(`${API_BASE}${path}`, { cache: 'no-store', headers: authHeaders });
+    if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+    return r.json();
   };
 
   // ------- Normalização de mídia/playlist -------
-  const normalize = (arr) =>
-    (arr || []).map((m) => {
-      const tipoRaw = String(m.tipo || '').toUpperCase().trim();
+  const normalize = (arr) => {
+    return (arr || []).map((m) => {
+      const tipoRaw = String(m.tipo || '').toUpperCase();
       return {
         id: m.id,
         url: m.url,
@@ -104,29 +90,27 @@ export default function Painel() {
           (m.duracao_seg ? Number(m.duracao_seg) * 1000 : undefined),
         ord: Number(m.ord ?? 0),
         ativo: m.ativo == null ? 1 : Number(m.ativo),
-        audio_on: m.audio_on ?? true,
       };
     });
+  };
 
-  // ------- Buscar playlist -------
+  // ------- Buscar playlist (com fallback para /api/midia) -------
   const fetchPlaylist = async () => {
     try {
-      const tk = getToken();
-      const itemsJson =
-        (await fetchFirstOk([
-          '/api/playlist',
-          `/api/playlist?token=${encodeURIComponent(tk)}`,
-          '/api/midia',
-          `/api/midia?token=${encodeURIComponent(tk)}`
-        ])) || [];
+      let items = [];
+      try {
+        const j = await fetchJson('/api/playlist'); // pode exigir token
+        items = Array.isArray(j) ? j : Array.isArray(j?.items) ? j.items : [];
+      } catch (e) {
+        console.warn('playlist falhou:', e?.message || e);
+      }
 
-      const items = Array.isArray(itemsJson)
-        ? itemsJson
-        : Array.isArray(itemsJson?.items) ? itemsJson.items : [];
+      if (!Array.isArray(items) || items.length === 0) {
+        const j2 = await fetchJson('/api/midia');   // fallback autenticado
+        items = Array.isArray(j2) ? j2 : [];
+      }
 
-      const norm = normalize(items);
-      setPlaylist(norm);
-      dlog('Playlist:', norm);
+      setPlaylist(normalize(items));
     } catch (e) {
       console.warn('Falha ao buscar playlist:', e);
       setPlaylist([]);
@@ -159,149 +143,8 @@ export default function Painel() {
     return () => clearInterval(intervaloRef.current);
   }, [fila, carroFinalizado]);
 
-  // ================== Liberação de áudio (click/OK) ==================
-  const unlockAudio = async () => {
-    try {
-      // “desbloqueio” de áudio
-      const a = new Audio('/motor.mp3');
-      a.volume = 0;
-      await a.play().catch(() => {});
-      a.pause(); a.currentTime = 0;
-
-      if ('speechSynthesis' in window) {
-        const u = new SpeechSynthesisUtterance(' ');
-        u.lang = 'pt-BR';
-        window.speechSynthesis.speak(u);
-      }
-
-      setAudioOK(true);
-
-      // Desmuta vídeo se já estiver tocando
-      const v = videoRef.current;
-      if (v && !v.paused) {
-        try { v.muted = false; v.volume = 1; await v.play(); } catch {}
-      }
-    } catch { setAudioOK(true); }
-  };
-  useEffect(() => {
-    if (!audioOK) {
-      const t0 = Date.now();
-      const tick = () => {
-        if (audioOK) return;
-        unlockBtnRef.current?.focus();
-        if (Date.now() - t0 < 1000) requestAnimationFrame(tick);
-      };
-      tick();
-    }
-  }, [audioOK]);
-
-  useEffect(() => {
-    const onKey = (e) => {
-      const ok = e.key === 'Enter' || e.key === 'NumpadEnter' || e.key === ' ' || e.keyCode === 13 || e.keyCode === 32;
-      if (!audioOK && ok) { e.preventDefault(); unlockAudio(); }
-    };
-    document.addEventListener('keydown', onKey, true);
-    return () => document.removeEventListener('keydown', onKey, true);
-  }, [audioOK]);
-
-  // ================== Helpers de áudio/voz ==================
-  function corrigirPronunciaModelo(modelo) {
-    const m = (modelo || '').toString().trim();
-    const upper = m.toUpperCase();
-    switch (upper) {
-      case 'KWID': return 'cuidi';
-      case 'BYD': return 'biu ai di';
-      case 'HB20': return 'agá bê vinte';
-      case 'ONIX': return 'ônix';
-      case 'T-CROSS': return 'tê cross';
-      case 'HR-V': return 'agá érre vê';
-      case 'CR-V': return 'cê érre vê';
-      case 'FERRARI': return 'FÉRRARI';
-      case 'MOBI': return 'MÓBI';
-      default: return m;
-    }
-  }
-
-  function speak(texto) {
-    if (!('speechSynthesis' in window)) return false;
-    try {
-      const u = new SpeechSynthesisUtterance(texto);
-      u.lang = 'pt-BR'; u.rate = 1.0;
-      const voices = window.speechSynthesis.getVoices?.() || [];
-      const v = voices.find(v => v.lang?.toLowerCase().startsWith('pt')) || voices[0];
-      if (v) u.voice = v;
-      window.speechSynthesis.cancel();
-      window.speechSynthesis.speak(u);
-      return true;
-    } catch { return false; }
-  }
-
-  function playUrl(url, { volume = 1, timeoutMs = 15000 } = {}) {
-    return new Promise((resolve) => {
-      const a = new Audio();
-      a.preload = 'auto';
-      a.crossOrigin = 'anonymous';
-      a.volume = volume;
-      const sep = url.includes('?') ? '&' : '?';
-      a.src = `${url}${sep}_=${Date.now()}`;
-      let done = false;
-      const finish = (reason='ok') => { if (done) return; done = true; try{a.pause();}catch{} resolve(reason); };
-      a.addEventListener('canplay', () => a.play().catch(() => finish('blocked')));
-      a.addEventListener('ended', () => finish('ended'));
-      a.addEventListener('error', () => finish('error'));
-      a.load();
-      setTimeout(() => finish('timeout'), timeoutMs);
-    });
-  }
-
-  // **DEFINIDO COMO FUNÇÃO (não const) para evitar problemas de hoisting**
-  function playWithFallback(url, { volume = 1, timeoutMs = 7000 } = {}) {
-    return new Promise((resolve) => {
-      const a = new Audio(url);
-      a.preload = 'auto'; a.volume = volume;
-      let done = false;
-      const finish = (reason='ok') => { if (done) return; done = true; try{a.pause();}catch{} resolve(reason); };
-      a.addEventListener('ended', () => finish('ended'));
-      a.addEventListener('error', () => finish('error'));
-      a.play().catch(() => finish('blocked'));
-      setTimeout(() => finish('timeout'), timeoutMs);
-    });
-  }
-
   // ================== Agendamento / Overlay ==================
-
-  // *** NOVO parseMaybe: aceita "YYYY-MM-DD HH:mm:ss" e "DD/MM/YYYY HH:mm[:ss]" como LOCAL ***
-  const parseMaybe = (s) => {
-    if (s == null || s === '') return null;
-    if (typeof s === 'number') return s;
-
-    let str = String(s).trim();
-
-    // "YYYY-MM-DD HH:mm[:ss]" → tratar como local (sem Z)
-    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}(:\d{2})?$/.test(str)) {
-      str = str.replace(' ', 'T'); // ISO local
-    }
-
-    // "DD/MM/YYYY HH:mm[:ss]"
-    const m = str.match(/^(\d{2})\/(\d{2})\/(\d{4})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?$/);
-    if (m) {
-      const [, dd, MM, yyyy, hh = '00', mm = '00', ss = '00'] = m;
-      const d = new Date(
-        Number(yyyy),
-        Number(MM) - 1,
-        Number(dd),
-        Number(hh),
-        Number(mm),
-        Number(ss)
-      );
-      const t = d.getTime();
-      return Number.isFinite(t) ? t : null;
-    }
-
-    const t = new Date(str).getTime();
-    return Number.isFinite(t) ? t : null;
-  };
-
+  const parseMaybe = (s) => (s ? new Date(s).getTime() : null);
   const inDateWindow = (item, t) => {
     const ini = parseMaybe(item.data_inicio);
     const fim = parseMaybe(item.data_fim);
@@ -316,7 +159,7 @@ export default function Painel() {
     (playlist || [])
       .filter(isActive)
       .filter((x) => inDateWindow(x, t))
-      .sort((a, b) => (a.ord ?? 0) - (b.ord ?? 0) || String(a.id).localeCompare(String(b.id)));
+      .sort((a, b) => (a.ord ?? 0) - (b.ord ?? 0) || a.id - b.id);
 
   const ivMs = (it) => Math.max(0, Number(it.intervalo_minutos || 0) * 60000);
   const anchorMs = (it) => {
@@ -329,37 +172,33 @@ export default function Painel() {
     const base = anchorMs(it);
     return Math.floor((t - base) / iv) * iv + base;
   };
+
   const inIntervalWindow = (it, t, wndSec) => {
     const iv = ivMs(it);
     if (iv <= 0) return true;
     const bs = blockStart(it, t);
     return t >= bs && (t - bs) < wndSec * 1000;
   };
-  const mustOpenOverlayNow = (t) => {
-    const vis = visibleNow(t);
-    if (FORCE_SHOW) return vis.length > 0;
-    return vis.some((it) => inIntervalWindow(it, t, windowSec));
-  };
 
-  // tick imediato + 500ms
+  const mustOpenOverlayNow = (t) =>
+    visibleNow(t).some((it) => inIntervalWindow(it, t, windowSec));
+
   useEffect(() => {
     const tick = () => {
       const t = nowMS();
-      const vis = visibleNow(t);
-      dlog('tick', { visiveis: vis.length, overlayOn, t, FORCE_SHOW });
       if (t < suppressUntilRef.current) return;
 
       if (carroFinalizado) {
         if (overlayOn) stopOverlay(false);
         return;
       }
+
       if (mustOpenOverlayNow(t)) {
         if (!overlayOn) startOverlay(t);
       } else {
         if (overlayOn) stopOverlay(false);
       }
     };
-    tick(); // roda já
     const id = setInterval(tick, 500);
     return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -380,7 +219,6 @@ export default function Painel() {
     } else {
       overlayBlockEndRef.current = tStart + windowSec * 1000;
     }
-    dlog('overlay START', { ate: overlayBlockEndRef.current, ref });
   };
 
   const stopOverlay = (closeAndSuppress = true) => {
@@ -393,109 +231,151 @@ export default function Painel() {
     if (closeAndSuppress) {
       suppressUntilRef.current = Math.max(suppressUntilRef.current, overlayBlockEndRef.current || 0);
     }
-    dlog('overlay STOP');
   };
 
-  const isVideoKind = (x) => {
-    const t = String(x?.tipo || '').toUpperCase();
-    if (t.startsWith('VID')) return true; // VIDEO / VID / VIDEO...
-    const raw = x?.src || x?.url || '';
-    return /\.(mp4|webm|ogv|m3u8)(\?|#|$)/i.test(raw);
-  };
+  const isVideoKind = (x) => String(x?.tipo || '').toUpperCase().startsWith('VID');
 
-  // --------- URL helpers ---------
-  const resolveBase = (it) => {
-    const raw = it?.src || it?.url || '';
-    if (!raw) return '';
-    if (/^https?:\/\//i.test(raw)) return raw;           // absoluta
-    const path = raw.startsWith('/') ? raw : `/${raw}`;  // relativa → API_BASE
-    return `${API_BASE}${path}`;
-  };
+  // Helpers de mídia
+  const mediaBase = (it) => it.src || `${API_BASE}${it.url}`;
   const withCacheBuster = (base) => base + (base.includes('?') ? '&' : '?') + '_=' + Date.now();
-  const imgSrcFor = (it) => withCacheBuster(resolveBase(it));
 
-  // ============ Player de vídeo (estável) ============
-  const startVideo = (videoEl, url, wantsSound) => {
-    if (!videoEl || !url) return;
+  // ============ PLAY de VÍDEO: anti-tela-preta + unmuted-first + retries ============
+  const startVideoWithSafeAutoplay = (videoEl, url) => {
+    if (!videoEl) return;
 
-    // atributos ANTES do src (autoplay seguro)
-    videoEl.setAttribute('muted', '');
-    videoEl.setAttribute('playsinline', '');
-    videoEl.setAttribute('webkit-playsinline', '');
+    // atributos seguros ANTES de definir src
+    videoEl.setAttribute('muted', '');   // importante: atributo já no DOM
     videoEl.muted = true;
     videoEl.playsInline = true;
+    videoEl.setAttribute('playsinline', '');
+    videoEl.setAttribute('webkit-playsinline', '');
     videoEl.autoplay = true;
     videoEl.preload = 'auto';
-
-    // zera e aplica src
-    try { videoEl.pause(); } catch {}
-    try { videoEl.removeAttribute('src'); videoEl.load(); } catch {}
+    videoEl.disableRemotePlayback = true;
+    videoEl.crossOrigin = 'anonymous';
 
     const src = withCacheBuster(url);
+
+    // limpa handlers anteriores e estado
+    videoEl.onended = null;
+    videoEl.onerror = null;
+    videoEl.onloadeddata = null;
+    videoEl.onloadedmetadata = null;
+    videoEl.oncanplay = null;
+    videoEl.onplaying = null;
+    videoEl.onstalled = null;
+
+    try { videoEl.pause(); } catch {}
+    try { videoEl.removeAttribute('src'); } catch {}
+    try { videoEl.load(); } catch {}
+
     videoEl.src = src;
+    try { videoEl.load(); } catch {}
 
-    let failTimer = setTimeout(() => {
-      dlog('FAILSAFE 8s — não ficou playing, fechando overlay');
-      stopOverlay(true);
-    }, 8000);
+    let failTimer = null;
+    let retriedOnce = false;
 
-    const tryUnmute = () => {
-      if (!wantsSound) return;
-      if (!audioOK) return;
-      [0, 150, 600, 2000].forEach((ms) =>
-        setTimeout(() => { try { videoEl.muted = false; videoEl.volume = 1; } catch {} }, ms)
-      );
+    const tryUnmuteIfAllowed = () => {
+      if (VIDEO_AUDIO_ENABLED && audioOK) {
+        [0, 120, 600, 2000].forEach((ms) => {
+          setTimeout(() => { try { videoEl.muted = false; videoEl.volume = 1; } catch {} }, ms);
+        });
+      }
     };
 
-    videoEl.onloadeddata = async () => {
-      try { if (videoEl.currentTime === 0) videoEl.currentTime = 0.001; } catch {}
-      try {
-        await videoEl.play();
-        dlog('play() OK');
-        tryUnmute();
-      } catch (e) {
-        dlog('play() falhou, tenta mudo', e);
+    const confirmFirstFrameOrRetry = () => {
+      if ('requestVideoFrameCallback' in videoEl) {
         try {
+          videoEl.requestVideoFrameCallback((_now, meta) => {
+            if (!meta || meta.presentedFrames === 0) retryWithNewSrc();
+          });
+        } catch {}
+      }
+    };
+
+    const retryWithNewSrc = () => {
+      if (retriedOnce) return;
+      retriedOnce = true;
+      try { videoEl.pause(); } catch {}
+      try { videoEl.removeAttribute('src'); } catch {}
+      try { videoEl.load(); } catch {}
+
+      const src2 = withCacheBuster(url);
+      videoEl.src = src2;
+      try { videoEl.load(); } catch {}
+      try { if (videoEl.currentTime === 0) videoEl.currentTime = 0.001; } catch {}
+      safePlay(false);
+    };
+
+    const stopFail = () => { if (failTimer) { clearTimeout(failTimer); failTimer = null; } };
+
+    // tenta unmuted primeiro (se o device permitir, já sai com som); se falhar, toca mudo
+    const safePlay = async (tryUnmutedFirst = true) => {
+      try {
+        if (tryUnmutedFirst) {
+          // tenta sem mudo
+          videoEl.muted = !(VIDEO_AUDIO_ENABLED);
+        } else {
           videoEl.muted = true;
-          await videoEl.play();
-          tryUnmute();
-        } catch (e2) {
-          clearTimeout(failTimer);
+        }
+        try { if (videoEl.currentTime === 0) videoEl.currentTime = 0.001; } catch {}
+        await videoEl.play();
+        tryUnmuteIfAllowed(); // garante desmutar quando possível
+      } catch {
+        if (tryUnmutedFirst) {
+          // fallback: tocar mudo (sempre deve funcionar)
+          try {
+            videoEl.muted = true;
+            await videoEl.play();
+            tryUnmuteIfAllowed();
+          } catch {
+            stopOverlay(true);
+          }
+        } else {
           stopOverlay(true);
         }
       }
     };
-    videoEl.onplaying = () => { clearTimeout(failTimer); dlog('onplaying'); tryUnmute(); };
-    videoEl.onended = () => { dlog('onended'); stopOverlay(true); };
-    videoEl.onerror = () => { dlog('onerror'); stopOverlay(true); };
 
-    try { videoEl.load(); } catch {}
+    videoEl.onloadedmetadata = () => {
+      // alguns devices precisam do seekzinho antes do play
+      try { if (videoEl.currentTime === 0) videoEl.currentTime = 0.001; } catch {}
+    };
+    videoEl.onloadeddata = () => { safePlay(true); };
+    videoEl.oncanplay = () => { if (videoEl.paused) safePlay(true); };
+    videoEl.onplaying = () => { stopFail(); confirmFirstFrameOrRetry(); tryUnmuteIfAllowed(); };
+    videoEl.onstalled = () => { retryWithNewSrc(); };
+    videoEl.onended = () => stopOverlay(true);
+    videoEl.onerror = () => stopOverlay(true);
+
+    // fail-safe: se em 8s não ficou "playing", fecha overlay (evita ficar preto)
+    failTimer = setTimeout(() => {
+      if (videoEl.paused || videoEl.readyState < 2) stopOverlay(true);
+    }, 8000);
   };
-  // ===============================================
+  // ========================================================================
 
-  // tocar item atual (vídeo/ imagem)
+  // toca item atual
   useEffect(() => {
     if (!overlayOn) return;
     const items = visibleNow(nowMS());
     if (!items.length) return;
 
     const current = items[overlayIdx % items.length];
-    dlog('Tocar item', current);
 
     if (imgTimerRef.current) { clearTimeout(imgTimerRef.current); imgTimerRef.current = null; }
 
-    const base = resolveBase(current);
-    if (!base) { stopOverlay(true); return; }
+    const base = mediaBase(current);
 
     if (isVideoKind(current)) {
-      startVideo(videoRef.current, base, current.audio_on !== false);
+      startVideoWithSafeAutoplay(videoRef.current, base);
     } else {
       const durMs =
         Number(current.image_duration_ms) ||
         Number(current.duracao_ms) ||
         (Number(current.duracao_seg || 10) * 1000);
+
       const ms = Math.max(3000, durMs || 10000);
-      dlog('Imagem por', ms, 'ms');
       imgTimerRef.current = setTimeout(() => stopOverlay(true), ms);
     }
 
@@ -508,7 +388,7 @@ export default function Painel() {
   // ================== Sockets (finalização + novo carro) ==================
   useEffect(() => {
     const onCarroFinalizado = async (carro) => {
-      stopOverlay(true); // interrompe overlay e suprime reabertura
+      stopOverlay(true);
 
       setCarroFinalizado(carro);
       setEmDestaque(true);
@@ -518,66 +398,6 @@ export default function Painel() {
         setCarroAtual((idx) => (idx >= nova.length ? 0 : idx));
         return nova;
       });
-
-      // --- FLUXO DE ÁUDIO / TTS ---
-      const tocarFluxo = async () => {
-        try {
-          await playWithFallback('/busina.mp3', { timeoutMs: 2000 }).catch(() => {});
-
-          const motor = new Audio('/motor.mp3'); motor.preload = 'auto'; motor.volume = 1;
-
-          let halfTimer = null;
-          const halfPromise = new Promise((res) => {
-            motor.addEventListener('loadedmetadata', () => {
-              const half = ((motor.duration || 2) / 2) * 1000;
-              halfTimer = setTimeout(() => { new Audio('/freiada.mp3').play().catch(() => {}); res(null); }, half);
-            });
-            setTimeout(() => { if (!halfTimer) { new Audio('/freiada.mp3').play().catch(() => {}); res(null); } }, 1200);
-          });
-          const endPromise = new Promise((res) => {
-            motor.addEventListener('ended', () => res(null));
-            motor.addEventListener('error', () => res(null));
-            setTimeout(() => res(null), 4000);
-          });
-
-          motor.play().catch(() => {});
-          await Promise.race([endPromise]);
-          clearTimeout(halfTimer);
-          await halfPromise;
-
-          await playWithFallback('/busina.mp3', { timeoutMs: 2500 }).catch(() => {});
-
-          const ajustarLetra = (L) => ({ Q: 'quê', W: 'dáblio', Y: 'ípsilon', E: 'é' }[L?.toUpperCase()] || L?.toUpperCase());
-          const placaSeparada = (carro.placa || '').toString().toUpperCase().split('').map(ajustarLetra).join(' ');
-          const modeloCorrigido = corrigirPronunciaModelo(carro.modelo);
-          const frase = `Serviço finalizado, Carro ${modeloCorrigido}, placa ${placaSeparada}, cor ${carro.cor}, dirija-se ao caixa. Obrigado pela preferência!`;
-
-          const url = new URL(`${API_BASE}/api/tts`);
-          url.searchParams.set('text', frase);
-          const tk = getToken(); if (tk) url.searchParams.set('token', tk);
-
-          const reason = await playUrl(url.toString(), { volume: 1, timeoutMs: 15000 });
-          if (reason !== 'ended') {
-            const ok = speak(frase);
-            if (!ok) await playWithFallback('/busina.mp3', { timeoutMs: 1500 }).catch(() => {});
-          }
-        } catch (e) {
-          console.warn('Erro no fluxo de áudio:', e);
-        }
-      };
-
-      if (audioOK) {
-        tocarFluxo();
-      } else {
-        const watch = setInterval(() => { if (audioOK) { clearInterval(watch); tocarFluxo(); } }, 250);
-        setTimeout(() => clearInterval(watch), 20000);
-      }
-
-      if (timeoutDestaqueRef.current) clearTimeout(timeoutDestaqueRef.current);
-      timeoutDestaqueRef.current = setTimeout(() => {
-        setCarroFinalizado(null);
-        setEmDestaque(false);
-      }, 30000);
     };
 
     const onNovoCarroAdicionado = () => {
@@ -603,32 +423,18 @@ export default function Painel() {
   const carroDestaque = carroFinalizado || fila[carroAtual];
   const overlayItems = useMemo(() => visibleNow(nowMS()), [playlist]);
 
+  // item atual do overlay + src cache-busted
+  const currentOverlayItem =
+    overlayOn && overlayItems.length > 0
+      ? overlayItems[overlayIdx % overlayItems.length]
+      : null;
+
+  const currentImgSrc = currentOverlayItem && !isVideoKind(currentOverlayItem)
+    ? withCacheBuster(mediaBase(currentOverlayItem))
+    : null;
+
   return (
     <div className="painel">
-      {/* OVERLAY DE PERMISSÃO */}
-      {!audioOK && (
-        <button
-          ref={unlockBtnRef}
-          autoFocus
-          onClick={unlockAudio}
-          onKeyDown={(e) => {
-            const ok = e.key === 'Enter' || e.key === 'NumpadEnter' || e.key === ' ' || e.keyCode === 13 || e.keyCode === 32;
-            if (ok) { e.preventDefault(); unlockAudio(); }
-          }}
-          style={{
-            position: 'fixed', inset: 0, zIndex: 99999, background: 'rgba(0,0,0,0.85)',
-            color: '#0ff', fontSize: '3rem', fontWeight: 800, textShadow: '0 0 10px #0ff',
-            border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center',
-            flexDirection: 'column', gap: 8, padding: 20, cursor: 'pointer'
-          }}
-        >
-          <div>Pressione <u>OK</u> no controle</div>
-          <div style={{ fontSize: '1.4rem', color: '#9ff' }}>
-            para habilitar o áudio e a voz das chamadas
-          </div>
-        </button>
-      )}
-
       {/* TOPO */}
       <div className="topo">
         <div className="titulo" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -703,19 +509,16 @@ export default function Painel() {
       </div>
 
       {/* OVERLAY DE MÍDIA */}
-      {overlayOn && overlayItems.length > 0 && (
-        <div className="media-overlay" onClick={() => stopOverlay(true)}>
-          {isVideoKind(overlayItems[overlayIdx % overlayItems.length]) ? (
+      {overlayOn && currentOverlayItem && (
+        <div className="media-overlay">
+          {isVideoKind(currentOverlayItem) ? (
+            // >>> AQUI o vídeo já nasce com muted/playsInline/autoPlay no JSX <<<
             <video ref={videoRef} className="media-el" muted playsInline autoPlay />
           ) : (
             <img
               className="media-el"
-              alt={overlayItems[overlayIdx % overlayItems.length].titulo || 'mídia'}
-              src={(function () {
-                const it = overlayItems[overlayIdx % overlayItems.length];
-                const base = resolveBase(it);
-                return withCacheBuster(base);
-              })()}
+              alt={currentOverlayItem.titulo || 'mídia'}
+              src={currentImgSrc || ''}
             />
           )}
         </div>
