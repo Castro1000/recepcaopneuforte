@@ -205,7 +205,7 @@ export default function Painel() {
   }, [audioOK]);
 
   // ================== Helpers de áudio/voz ==================
-  const corrigirPronunciaModelo = (modelo) => {
+  function corrigirPronunciaModelo(modelo) {
     const m = (modelo || '').toString().trim();
     const upper = m.toUpperCase();
     switch (upper) {
@@ -220,9 +220,9 @@ export default function Painel() {
       case 'MOBI': return 'MÓBI';
       default: return m;
     }
-  };
+  }
 
-  const speak = (texto) => {
+  function speak(texto) {
     if (!('speechSynthesis' in window)) return false;
     try {
       const u = new SpeechSynthesisUtterance(texto);
@@ -234,10 +234,10 @@ export default function Painel() {
       window.speechSynthesis.speak(u);
       return true;
     } catch { return false; }
-  };
+  }
 
-  const playUrl = (url, { volume = 1, timeoutMs = 15000 } = {}) =>
-    new Promise((resolve) => {
+  function playUrl(url, { volume = 1, timeoutMs = 15000 } = {}) {
+    return new Promise((resolve) => {
       const a = new Audio();
       a.preload = 'auto';
       a.crossOrigin = 'anonymous';
@@ -252,9 +252,11 @@ export default function Painel() {
       a.load();
       setTimeout(() => finish('timeout'), timeoutMs);
     });
+  }
 
-  const playWithFallback = (url, { volume = 1, timeoutMs = 7000 } = {}) =>
-    new Promise((resolve) => {
+  // **DEFINIDO COMO FUNÇÃO (não const) para evitar problemas de hoisting**
+  function playWithFallback(url, { volume = 1, timeoutMs = 7000 } = {}) {
+    return new Promise((resolve) => {
       const a = new Audio(url);
       a.preload = 'auto'; a.volume = volume;
       let done = false;
@@ -264,6 +266,7 @@ export default function Painel() {
       a.play().catch(() => finish('blocked'));
       setTimeout(() => finish('timeout'), timeoutMs);
     });
+  }
 
   // ================== Agendamento / Overlay ==================
 
@@ -423,7 +426,6 @@ export default function Painel() {
     videoEl.playsInline = true;
     videoEl.autoplay = true;
     videoEl.preload = 'auto';
-    // NÃO setar crossOrigin se o host não expõe CORS
 
     // zera e aplica src
     try { videoEl.pause(); } catch {}
@@ -517,10 +519,11 @@ export default function Painel() {
         return nova;
       });
 
-      // --- FLUXO DE ÁUDIO / TTS (mantido) ---
+      // --- FLUXO DE ÁUDIO / TTS ---
       const tocarFluxo = async () => {
         try {
           await playWithFallback('/busina.mp3', { timeoutMs: 2000 }).catch(() => {});
+
           const motor = new Audio('/motor.mp3'); motor.preload = 'auto'; motor.volume = 1;
 
           let halfTimer = null;
@@ -708,7 +711,11 @@ export default function Painel() {
             <img
               className="media-el"
               alt={overlayItems[overlayIdx % overlayItems.length].titulo || 'mídia'}
-              src={imgSrcFor(overlayItems[overlayIdx % overlayItems.length])}
+              src={(function () {
+                const it = overlayItems[overlayIdx % overlayItems.length];
+                const base = resolveBase(it);
+                return withCacheBuster(base);
+              })()}
             />
           )}
         </div>
