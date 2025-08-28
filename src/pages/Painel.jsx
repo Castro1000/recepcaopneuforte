@@ -151,28 +151,53 @@ export default function Painel() {
   // ================== Agendamento / Overlay ==================
 
   // parseMaybe mais tolerante (trata formatos locais comuns)
-  const parseMaybe = (s) => {
-    if (s == null || s === '') return null;
-    if (typeof s === 'number') return s;
-    let str = String(s).trim();
+  // Substitua sua parseMaybe por ESTA:
+const parseMaybe = (s) => {
+  if (s == null || s === '') return null;
+  if (typeof s === 'number') return s;
 
-    // "YYYY-MM-DD HH:mm[:ss]" → horário local
-    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}(:\d{2})?$/.test(str)) {
-      str = str.replace(' ', 'T');
-    }
+  // normaliza vírgulas para espaço
+  let str = String(s).trim().replace(',', ' ');
 
-    // "DD/MM/YYYY HH:mm[:ss]" → horário local
-    const m = str.match(/^(\d{2})\/(\d{2})\/(\d{4})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?$/);
-    if (m) {
-      const [, dd, MM, yyyy, hh='00', mm='00', ss='00'] = m;
-      const d = new Date(+yyyy, +MM - 1, +dd, +hh, +mm, +ss);
-      const t = d.getTime();
-      return Number.isFinite(t) ? t : null;
-    }
-
-    const t = new Date(str).getTime();
+  // DD/MM/YYYY HH:mm[:ss]  (horário local)
+  let m = str.match(
+    /^(\d{2})\/(\d{2})\/(\d{4})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?$/
+  );
+  if (m) {
+    const [, dd, MM, yyyy, hh = '00', mm = '00', ss = '00'] = m;
+    const d = new Date(+yyyy, +MM - 1, +dd, +hh, +mm, +ss);
+    const t = d.getTime();
     return Number.isFinite(t) ? t : null;
-  };
+  }
+
+  // YYYY-MM-DD HH:mm[:ss] (sem timezone) -> local
+  m = str.match(
+    /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/
+  );
+  if (m && !/[zZ]|[+\-]\d{2}:?\d{2}$/.test(str)) {
+    const [, yyyy, MM, dd, hh, mm, ss = '00'] = m;
+    const d = new Date(+yyyy, +MM - 1, +dd, +hh, +mm, +ss);
+    const t = d.getTime();
+    return Number.isFinite(t) ? t : null;
+  }
+
+  // ISO com Z ou offset (ex.: 2025-08-27T17:19:00Z, 2025-08-27T17:19:00-03:00)
+  // Interpreta como horário LOCAL (ignora o offset da string)
+  m = str.match(
+    /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?(?:Z|[+\-]\d{2}:?\d{2})$/
+  );
+  if (m) {
+    const [, yyyy, MM, dd, hh, mm, ss = '00'] = m;
+    const d = new Date(+yyyy, +MM - 1, +dd, +hh, +mm, +ss);
+    const t = d.getTime();
+    return Number.isFinite(t) ? t : null;
+  }
+
+  // fallback
+  const t = Date.parse(str);
+  return Number.isFinite(t) ? t : null;
+};
+
 
   const inDateWindow = (item, t) => {
     const ini = parseMaybe(item.data_inicio);
