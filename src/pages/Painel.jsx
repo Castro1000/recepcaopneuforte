@@ -45,8 +45,12 @@ export default function Painel() {
   const suppressUntilRef = useRef(0);
   const overlayBlockEndRef = useRef(0);
 
-  const TOKEN = (localStorage.getItem('token') || '').trim();
-  const authHeaders = TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {};
+  // Token dinâmico sempre que precisar (evita 403 por header “congelado”)
+  const getToken = () => (localStorage.getItem('token') || '').trim();
+  const getAuthHeaders = () => {
+    const tk = getToken();
+    return tk ? { Authorization: `Bearer ${tk}` } : {};
+  };
 
   const montaServicos = (c) =>
     [c?.servico, c?.servico2, c?.servico3].filter(Boolean).join(' | ');
@@ -65,7 +69,7 @@ export default function Painel() {
 
   // ------- Helpers de fetch JSON com token -------
   const fetchJson = async (path) => {
-    const r = await fetch(`${API_BASE}${path}`, { cache: 'no-store', headers: authHeaders });
+    const r = await fetch(`${API_BASE}${path}`, { cache: 'no-store', headers: getAuthHeaders() });
     if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
     return r.json();
   };
@@ -82,14 +86,14 @@ export default function Painel() {
         titulo: m.titulo || '',
         data_inicio: m.data_inicio || null,
         data_fim: m.data_fim || null,
-        intervalo_minutos: m.intervalo_minutos ?? 0,
+        // aceita singular/plural vindo do backend
+        intervalo_minutos: m.intervalo_minutos ?? m.intervalo_minuto ?? 0,
         image_duration_ms:
           m.image_duration_ms ??
           m.duracao_ms ??
           (m.duracao_seg ? Number(m.duracao_seg) * 1000 : undefined),
         ord: Number(m.ord ?? 0),
         ativo: m.ativo == null ? 1 : Number(m.ativo),
-        audio_on: m.audio_on ?? true, // futuro: por-item
       };
     });
   };
@@ -144,42 +148,26 @@ export default function Painel() {
   }, [fila, carroFinalizado]);
 
   // ================== Agendamento / Overlay ==================
-  // Trata formatos locais como local; RESPEITA timezone quando houver Z ou ±HH:mm
+
+  // Parser de datas: ignora timezone e trata tudo como LOCAL
   const parseMaybe = (s) => {
     if (s == null || s === '') return null;
-    if (typeof s === 'number') return Number.isFinite(s) ? s : null;
+    const str = String(s).trim();
 
-    const str = String(s).trim().replace(',', ' ');
-
-    // DD/MM/YYYY HH:mm[:ss]  -> LOCAL
-    let m = str.match(
-      /^(\d{2})\/(\d{2})\/(\d{4})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?$/
-    );
+    // "YYYY-MM-DD HH:mm[:ss]" ou "YYYY-MM-DDTHH:mm[:ss]"
+    let m = str.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/);
     if (m) {
-      const [, dd, MM, yyyy, hh = '00', mm = '00', ss = '00'] = m;
-      const d = new Date(+yyyy, +MM - 1, +dd, +hh, +mm, +ss);
-      const t = d.getTime();
+      const [, y, M, d, h, mi, sec='00'] = m;
+      const t = new Date(+y, +M - 1, +d, +h, +mi, +sec).getTime();
       return Number.isFinite(t) ? t : null;
     }
-
-    // YYYY-MM-DD HH:mm[:ss] (SEM timezone) -> LOCAL
-    m = str.match(
-      /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/
-    );
-    if (m && !/[zZ]|[+\-]\d{2}:?\d{2}$/.test(str)) {
-      const [, yyyy, MM, dd, hh, mm, ss = '00'] = m;
-      const d = new Date(+yyyy, +MM - 1, +dd, +hh, +mm, +ss);
-      const t = d.getTime();
+    // ISO com Z/offset → ignora offset e interpreta como LOCAL
+    m = str.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?.*(Z|[+\-]\d{2}:?\d{2})$/);
+    if (m) {
+      const [, y, M, d, h, mi, sec='00'] = m;
+      const t = new Date(+y, +M - 1, +d, +h, +mi, +sec).getTime();
       return Number.isFinite(t) ? t : null;
     }
-
-    // ISO COM Z OU OFFSET -> RESPEITA OFFSET
-    if (/[zZ]|[+\-]\d{2}:?\d{2}$/.test(str)) {
-      const t = Date.parse(str); // interpreta UTC/offset corretamente
-      return Number.isFinite(t) ? t : null;
-    }
-
-    // fallback
     const t = Date.parse(str);
     return Number.isFinite(t) ? t : null;
   };
@@ -283,7 +271,7 @@ export default function Painel() {
     if (!videoEl) return;
 
     // atributos seguros ANTES de definir src
-    videoEl.setAttribute('muted', '');   // importante: atributo já no DOM
+    videoEl.setAttribute('muted', '');
     videoEl.muted = true;
     videoEl.playsInline = true;
     videoEl.setAttribute('playsinline', '');
@@ -291,7 +279,7 @@ export default function Painel() {
     videoEl.autoplay = true;
     videoEl.preload = 'auto';
     videoEl.disableRemotePlayback = true;
-    videoEl.crossOrigin = 'anonymous'; // remova se não precisar de CORS
+    videoEl.crossOrigin = 'anonymous';
 
     const src = withCacheBuster(url);
 
@@ -348,7 +336,7 @@ export default function Painel() {
 
     const stopFail = () => { if (failTimer) { clearTimeout(failTimer); failTimer = null; } };
 
-    // tenta unmuted primeiro (se o device permitir, já sai com som); se falhar, toca mudo
+    // tenta unmuted primeiro
     const safePlay = async (tryUnmutedFirst = true) => {
       try {
         if (tryUnmutedFirst) {
@@ -378,13 +366,13 @@ export default function Painel() {
       try { if (videoEl.currentTime === 0) videoEl.currentTime = 0.001; } catch {}
     };
     videoEl.onloadeddata = () => { safePlay(true); };
-    videoEl.oncanplay = () => { if (videoEl.paused) safePlay(true); };
-    videoEl.onplaying = () => { stopFail(); confirmFirstFrameOrRetry(); tryUnmuteIfAllowed(); };
-    videoEl.onstalled = () => { retryWithNewSrc(); };
-    videoEl.onended = () => stopOverlay(true);
-    videoEl.onerror = () => stopOverlay(true);
+    videoEl.oncanplay   = () => { if (videoEl.paused) safePlay(true); };
+    videoEl.onplaying   = () => { stopFail(); confirmFirstFrameOrRetry(); tryUnmuteIfAllowed(); };
+    videoEl.onstalled   = () => { retryWithNewSrc(); };
+    videoEl.onended     = () => stopOverlay(true);
+    videoEl.onerror     = () => stopOverlay(true);
 
-    // fail-safe: se em 8s não ficou "playing", fecha overlay (evita ficar preto)
+    // fail-safe: 8s sem “playing” → fecha overlay (evita ficar preto)
     failTimer = setTimeout(() => {
       if (videoEl.paused || videoEl.readyState < 2) stopOverlay(true);
     }, 8000);
@@ -419,68 +407,7 @@ export default function Painel() {
       if (imgTimerRef.current) { clearTimeout(imgTimerRef.current); imgTimerRef.current = null; }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [overlayOn, overlayIdx, audioOK]);
-
-  // ================== Áudio utilitários (para o FINALIZADO) ==================
-  const speak = (texto) => {
-    if (!('speechSynthesis' in window)) return false;
-    try {
-      const u = new SpeechSynthesisUtterance(texto);
-      u.lang = 'pt-BR'; u.rate = 1.0;
-      const voices = window.speechSynthesis.getVoices?.() || [];
-      const v = voices.find(v => v.lang?.toLowerCase().startsWith('pt')) || voices[0];
-      if (v) u.voice = v;
-      window.speechSynthesis.cancel();
-      window.speechSynthesis.speak(u);
-      return true;
-    } catch { return false; }
-  };
-
-  const playWithFallback = (url, { volume = 1, timeoutMs = 7000 } = {}) =>
-    new Promise((resolve) => {
-      const a = new Audio(url);
-      a.preload = 'auto'; a.volume = volume;
-      let done = false;
-      const finish = (reason='ok') => { if (done) return; done = true; try{a.pause();}catch{} resolve(reason); };
-      a.addEventListener('ended', () => finish('ended'));
-      a.addEventListener('error', () => finish('error'));
-      a.play().catch(() => finish('blocked'));
-      setTimeout(() => finish('timeout'), timeoutMs);
-    });
-
-  const playUrl = (url, { volume = 1, timeoutMs = 15000 } = {}) =>
-    new Promise((resolve) => {
-      const a = new Audio();
-      a.preload = 'auto';
-      a.crossOrigin = 'anonymous';
-      a.volume = volume;
-      const sep = url.includes('?') ? '&' : '?';
-      a.src = `${url}${sep}_=${Date.now()}`;
-      let done = false;
-      const finish = (reason='ok') => { if (done) return; done = true; try{a.pause();}catch{} resolve(reason); };
-      a.addEventListener('canplay', () => a.play().catch(() => finish('blocked')));
-      a.addEventListener('ended', () => finish('ended'));
-      a.addEventListener('error', () => finish('error'));
-      a.load();
-      setTimeout(() => finish('timeout'), timeoutMs);
-    });
-
-  const corrigirPronunciaModelo = (modelo) => {
-    const m = (modelo || '').toString().trim();
-    const upper = m.toUpperCase();
-    switch (upper) {
-      case 'KWID': return 'cuidi';
-      case 'BYD': return 'biu ai di';
-      case 'HB20': return 'agá bê vinte';
-      case 'ONIX': return 'ônix';
-      case 'T-CROSS': return 'tê cross';
-      case 'HR-V': return 'agá érre vê';
-      case 'CR-V': return 'cê érre vê';
-      case 'FERRARI': return 'FÉRRARI';
-      case 'MOBI': return 'MÓBI';
-      default: return m;
-    }
-  };
+  }, [overlayOn, overlayIdx]);
 
   // ================== Sockets (finalização + novo carro) ==================
   useEffect(() => {
@@ -495,56 +422,6 @@ export default function Painel() {
         setCarroAtual((idx) => (idx >= nova.length ? 0 : idx));
         return nova;
       });
-
-      // --------- ÁUDIO DO FINALIZADO (buzina → motor+freio → buzina → TTS) ---------
-      const tocarFluxo = async () => {
-        try {
-          await playWithFallback('/busina.mp3', { timeoutMs: 2000 }).catch(() => {});
-          const motor = new Audio('/motor.mp3');
-          motor.preload = 'auto'; motor.volume = 1;
-
-          let halfTimer = null;
-          const halfPromise = new Promise((res) => {
-            motor.addEventListener('loadedmetadata', () => {
-              const half = ((motor.duration || 2) / 2) * 1000;
-              halfTimer = setTimeout(() => { new Audio('/freiada.mp3').play().catch(() => {}); res(null); }, half);
-            });
-            setTimeout(() => { if (!halfTimer) { new Audio('/freiada.mp3').play().catch(() => {}); res(null); } }, 1200);
-          });
-          const endPromise = new Promise((res) => {
-            motor.addEventListener('ended', () => res(null));
-            motor.addEventListener('error', () => res(null));
-            setTimeout(() => res(null), 4000);
-          });
-
-          motor.play().catch(() => {});
-          await Promise.race([endPromise]);
-          clearTimeout(halfTimer);
-          await halfPromise;
-
-          await playWithFallback('/busina.mp3', { timeoutMs: 2500 }).catch(() => {});
-
-          const ajustarLetra = (L) => ({ Q: 'quê', W: 'dáblio', Y: 'ípsilon', E: 'é' }[L?.toUpperCase()] || L?.toUpperCase());
-          const placaSeparada = (carro.placa || '').toString().toUpperCase().split('').map(ajustarLetra).join(' ');
-          const modeloCorrigido = corrigirPronunciaModelo(carro.modelo);
-          const frase = `Serviço finalizado, Carro ${modeloCorrigido}, placa ${placaSeparada}, cor ${carro.cor}, dirija-se ao caixa. Obrigado pela preferência!`;
-
-          const url = new URL(`${API_BASE}/api/tts`);
-          url.searchParams.set('text', frase);
-          const tk = (localStorage.getItem('token') || '').trim();
-          if (tk) url.searchParams.set('token', tk);
-
-          const reason = await playUrl(url.toString(), { volume: 1, timeoutMs: 15000 });
-          if (reason !== 'ended') {
-            const ok = speak(frase);
-            if (!ok) await playWithFallback('/busina.mp3', { timeoutMs: 1500 }).catch(() => {});
-          }
-        } catch (e) {
-          console.warn('Erro no fluxo de áudio:', e);
-        }
-      };
-
-      tocarFluxo();
 
       if (timeoutDestaqueRef.current) clearTimeout(timeoutDestaqueRef.current);
       timeoutDestaqueRef.current = setTimeout(() => {
@@ -566,7 +443,6 @@ export default function Painel() {
       socket.off('novoCarroAdicionado', onNovoCarroAdicionado);
       if (timeoutDestaqueRef.current) clearTimeout(timeoutDestaqueRef.current);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
