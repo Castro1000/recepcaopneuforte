@@ -28,8 +28,7 @@ export default function Painel() {
   const [emDestaque, setEmDestaque] = useState(false);
 
   // Liberação de áudio: começa TRUE para não exigir clique de desbloqueio
-  const [audioOK, setAudioOK] = useState(true);
-  const unlockBtnRef = useRef(null);
+  const [audioOK/*, setAudioOK*/] = useState(true);
 
   const intervaloRef = useRef(null);
   const timeoutDestaqueRef = useRef(null);
@@ -46,12 +45,8 @@ export default function Painel() {
   const suppressUntilRef = useRef(0);
   const overlayBlockEndRef = useRef(0);
 
-  // === Token dinâmico (evita 403 por header “congelado”) ===
-  const getToken = () => (localStorage.getItem('token') || '').trim();
-  const getAuthHeaders = () => {
-    const tk = getToken();
-    return tk ? { Authorization: `Bearer ${tk}` } : {};
-  };
+  const TOKEN = (localStorage.getItem('token') || '').trim();
+  const authHeaders = TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {};
 
   const montaServicos = (c) =>
     [c?.servico, c?.servico2, c?.servico3].filter(Boolean).join(' | ');
@@ -68,9 +63,9 @@ export default function Painel() {
     }
   };
 
-  // ------- Helpers de fetch JSON com token dinâmico -------
+  // ------- Helpers de fetch JSON com token -------
   const fetchJson = async (path) => {
-    const r = await fetch(`${API_BASE}${path}`, { cache: 'no-store', headers: getAuthHeaders() });
+    const r = await fetch(`${API_BASE}${path}`, { cache: 'no-store', headers: authHeaders });
     if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
     return r.json();
   };
@@ -149,43 +144,42 @@ export default function Painel() {
   }, [fila, carroFinalizado]);
 
   // ================== Agendamento / Overlay ==================
-
-  // Tipo do item
-  const isVideoKind = (x) => String(x?.tipo || '').toUpperCase().startsWith('VID');
-
-  // parseMaybe tolerante a formatos comuns (local)
+  // Trata formatos locais como local; RESPEITA timezone quando houver Z ou ±HH:mm
   const parseMaybe = (s) => {
     if (s == null || s === '') return null;
-    if (typeof s === 'number') return s;
-    let str = String(s).trim().replace(',', ' ');
+    if (typeof s === 'number') return Number.isFinite(s) ? s : null;
 
-    // DD/MM/YYYY HH:mm[:ss]
-    let m = str.match(/^(\d{2})\/(\d{2})\/(\d{4})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?$/);
+    const str = String(s).trim().replace(',', ' ');
+
+    // DD/MM/YYYY HH:mm[:ss]  -> LOCAL
+    let m = str.match(
+      /^(\d{2})\/(\d{2})\/(\d{4})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?$/
+    );
     if (m) {
-      const [, dd, MM, yyyy, hh='00', mm='00', ss='00'] = m;
+      const [, dd, MM, yyyy, hh = '00', mm = '00', ss = '00'] = m;
       const d = new Date(+yyyy, +MM - 1, +dd, +hh, +mm, +ss);
       const t = d.getTime();
       return Number.isFinite(t) ? t : null;
     }
 
-    // YYYY-MM-DD HH:mm[:ss] (sem timezone) → local
-    m = str.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/);
+    // YYYY-MM-DD HH:mm[:ss] (SEM timezone) -> LOCAL
+    m = str.match(
+      /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/
+    );
     if (m && !/[zZ]|[+\-]\d{2}:?\d{2}$/.test(str)) {
-      const [, yyyy, MM, dd, hh, mm, ss='00'] = m;
+      const [, yyyy, MM, dd, hh, mm, ss = '00'] = m;
       const d = new Date(+yyyy, +MM - 1, +dd, +hh, +mm, +ss);
       const t = d.getTime();
       return Number.isFinite(t) ? t : null;
     }
 
-    // ISO com Z/offset → tratar como local (ignora offset)
-    m = str.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?(?:Z|[+\-]\d{2}:?\d{2})$/);
-    if (m) {
-      const [, yyyy, MM, dd, hh, mm, ss='00'] = m;
-      const d = new Date(+yyyy, +MM - 1, +dd, +hh, +mm, +ss);
-      const t = d.getTime();
+    // ISO COM Z OU OFFSET -> RESPEITA OFFSET
+    if (/[zZ]|[+\-]\d{2}:?\d{2}$/.test(str)) {
+      const t = Date.parse(str); // interpreta UTC/offset corretamente
       return Number.isFinite(t) ? t : null;
     }
 
+    // fallback
     const t = Date.parse(str);
     return Number.isFinite(t) ? t : null;
   };
@@ -218,18 +212,10 @@ export default function Painel() {
     return Math.floor((t - base) / iv) * iv + base;
   };
 
-  // ⚠️ Importante: para VÍDEO não limitamos ao windowSec.
-  // Se tiver intervalo, vale o bloco inteiro (do início do bloco até início+intervalo).
-  // Se não tiver intervalo, basta estar entre data_inicio e data_fim.
   const inIntervalWindow = (it, t, wndSec) => {
     const iv = ivMs(it);
-    if (iv <= 0) return true; // sem intervalo → sempre que estiver entre início/fim
+    if (iv <= 0) return true;
     const bs = blockStart(it, t);
-    if (isVideoKind(it)) {
-      // vídeo: janela válida = todo o bloco do intervalo
-      return t >= bs && t < (bs + iv);
-    }
-    // imagem: mantém janela curta (windowSec) pra não ficar presa
     return t >= bs && (t - bs) < wndSec * 1000;
   };
 
@@ -286,6 +272,8 @@ export default function Painel() {
     }
   };
 
+  const isVideoKind = (x) => String(x?.tipo || '').toUpperCase().startsWith('VID');
+
   // Helpers de mídia
   const mediaBase = (it) => it.src || `${API_BASE}${it.url}`;
   const withCacheBuster = (base) => base + (base.includes('?') ? '&' : '?') + '_=' + Date.now();
@@ -334,12 +322,23 @@ export default function Painel() {
       }
     };
 
+    const confirmFirstFrameOrRetry = () => {
+      if ('requestVideoFrameCallback' in videoEl) {
+        try {
+          videoEl.requestVideoFrameCallback((_now, meta) => {
+            if (!meta || meta.presentedFrames === 0) retryWithNewSrc();
+          });
+        } catch {}
+      }
+    };
+
     const retryWithNewSrc = () => {
       if (retriedOnce) return;
       retriedOnce = true;
       try { videoEl.pause(); } catch {}
       try { videoEl.removeAttribute('src'); } catch {}
       try { videoEl.load(); } catch {}
+
       const src2 = withCacheBuster(url);
       videoEl.src = src2;
       try { videoEl.load(); } catch {}
@@ -380,7 +379,7 @@ export default function Painel() {
     };
     videoEl.onloadeddata = () => { safePlay(true); };
     videoEl.oncanplay = () => { if (videoEl.paused) safePlay(true); };
-    videoEl.onplaying = () => { stopFail(); tryUnmuteIfAllowed(); };
+    videoEl.onplaying = () => { stopFail(); confirmFirstFrameOrRetry(); tryUnmuteIfAllowed(); };
     videoEl.onstalled = () => { retryWithNewSrc(); };
     videoEl.onended = () => stopOverlay(true);
     videoEl.onerror = () => stopOverlay(true);
@@ -405,10 +404,8 @@ export default function Painel() {
     const base = mediaBase(current);
 
     if (isVideoKind(current)) {
-      // vídeo: deixa rolar até o fim (onended fecha), sem usar “tempo na tela”
       startVideoWithSafeAutoplay(videoRef.current, base);
     } else {
-      // imagem: ainda usa um tempo para sair (fallback 10s se nada vier)
       const durMs =
         Number(current.image_duration_ms) ||
         Number(current.duracao_ms) ||
@@ -534,7 +531,7 @@ export default function Painel() {
 
           const url = new URL(`${API_BASE}/api/tts`);
           url.searchParams.set('text', frase);
-          const tk = getToken();
+          const tk = (localStorage.getItem('token') || '').trim();
           if (tk) url.searchParams.set('token', tk);
 
           const reason = await playUrl(url.toString(), { volume: 1, timeoutMs: 15000 });
@@ -547,13 +544,7 @@ export default function Painel() {
         }
       };
 
-      if (audioOK) {
-        tocarFluxo();
-      } else {
-        const watch = setInterval(() => { if (audioOK) { clearInterval(watch); tocarFluxo(); } }, 250);
-        setTimeout(() => clearInterval(watch), 20000);
-      }
-      // --------------------------------------------------------------------
+      tocarFluxo();
 
       if (timeoutDestaqueRef.current) clearTimeout(timeoutDestaqueRef.current);
       timeoutDestaqueRef.current = setTimeout(() => {
@@ -576,7 +567,7 @@ export default function Painel() {
       if (timeoutDestaqueRef.current) clearTimeout(timeoutDestaqueRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [audioOK]);
+  }, []);
 
   useEffect(() => {
     if (!carroFinalizado && emDestaque) setEmDestaque(false);
