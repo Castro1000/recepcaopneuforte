@@ -150,54 +150,45 @@ export default function Painel() {
 
   // ================== Agendamento / Overlay ==================
 
-  // parseMaybe mais tolerante (trata formatos locais comuns)
-  // Substitua sua parseMaybe por ESTA:
-const parseMaybe = (s) => {
-  if (s == null || s === '') return null;
-  if (typeof s === 'number') return s;
+  // Tipo do item
+  const isVideoKind = (x) => String(x?.tipo || '').toUpperCase().startsWith('VID');
 
-  // normaliza vírgulas para espaço
-  let str = String(s).trim().replace(',', ' ');
+  // parseMaybe tolerante a formatos comuns (local)
+  const parseMaybe = (s) => {
+    if (s == null || s === '') return null;
+    if (typeof s === 'number') return s;
+    let str = String(s).trim().replace(',', ' ');
 
-  // DD/MM/YYYY HH:mm[:ss]  (horário local)
-  let m = str.match(
-    /^(\d{2})\/(\d{2})\/(\d{4})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?$/
-  );
-  if (m) {
-    const [, dd, MM, yyyy, hh = '00', mm = '00', ss = '00'] = m;
-    const d = new Date(+yyyy, +MM - 1, +dd, +hh, +mm, +ss);
-    const t = d.getTime();
+    // DD/MM/YYYY HH:mm[:ss]
+    let m = str.match(/^(\d{2})\/(\d{2})\/(\d{4})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?$/);
+    if (m) {
+      const [, dd, MM, yyyy, hh='00', mm='00', ss='00'] = m;
+      const d = new Date(+yyyy, +MM - 1, +dd, +hh, +mm, +ss);
+      const t = d.getTime();
+      return Number.isFinite(t) ? t : null;
+    }
+
+    // YYYY-MM-DD HH:mm[:ss] (sem timezone) → local
+    m = str.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/);
+    if (m && !/[zZ]|[+\-]\d{2}:?\d{2}$/.test(str)) {
+      const [, yyyy, MM, dd, hh, mm, ss='00'] = m;
+      const d = new Date(+yyyy, +MM - 1, +dd, +hh, +mm, +ss);
+      const t = d.getTime();
+      return Number.isFinite(t) ? t : null;
+    }
+
+    // ISO com Z/offset → tratar como local (ignora offset)
+    m = str.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?(?:Z|[+\-]\d{2}:?\d{2})$/);
+    if (m) {
+      const [, yyyy, MM, dd, hh, mm, ss='00'] = m;
+      const d = new Date(+yyyy, +MM - 1, +dd, +hh, +mm, +ss);
+      const t = d.getTime();
+      return Number.isFinite(t) ? t : null;
+    }
+
+    const t = Date.parse(str);
     return Number.isFinite(t) ? t : null;
-  }
-
-  // YYYY-MM-DD HH:mm[:ss] (sem timezone) -> local
-  m = str.match(
-    /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/
-  );
-  if (m && !/[zZ]|[+\-]\d{2}:?\d{2}$/.test(str)) {
-    const [, yyyy, MM, dd, hh, mm, ss = '00'] = m;
-    const d = new Date(+yyyy, +MM - 1, +dd, +hh, +mm, +ss);
-    const t = d.getTime();
-    return Number.isFinite(t) ? t : null;
-  }
-
-  // ISO com Z ou offset (ex.: 2025-08-27T17:19:00Z, 2025-08-27T17:19:00-03:00)
-  // Interpreta como horário LOCAL (ignora o offset da string)
-  m = str.match(
-    /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?(?:Z|[+\-]\d{2}:?\d{2})$/
-  );
-  if (m) {
-    const [, yyyy, MM, dd, hh, mm, ss = '00'] = m;
-    const d = new Date(+yyyy, +MM - 1, +dd, +hh, +mm, +ss);
-    const t = d.getTime();
-    return Number.isFinite(t) ? t : null;
-  }
-
-  // fallback
-  const t = Date.parse(str);
-  return Number.isFinite(t) ? t : null;
-};
-
+  };
 
   const inDateWindow = (item, t) => {
     const ini = parseMaybe(item.data_inicio);
@@ -227,10 +218,18 @@ const parseMaybe = (s) => {
     return Math.floor((t - base) / iv) * iv + base;
   };
 
+  // ⚠️ Importante: para VÍDEO não limitamos ao windowSec.
+  // Se tiver intervalo, vale o bloco inteiro (do início do bloco até início+intervalo).
+  // Se não tiver intervalo, basta estar entre data_inicio e data_fim.
   const inIntervalWindow = (it, t, wndSec) => {
     const iv = ivMs(it);
-    if (iv <= 0) return true;
+    if (iv <= 0) return true; // sem intervalo → sempre que estiver entre início/fim
     const bs = blockStart(it, t);
+    if (isVideoKind(it)) {
+      // vídeo: janela válida = todo o bloco do intervalo
+      return t >= bs && t < (bs + iv);
+    }
+    // imagem: mantém janela curta (windowSec) pra não ficar presa
     return t >= bs && (t - bs) < wndSec * 1000;
   };
 
@@ -287,8 +286,6 @@ const parseMaybe = (s) => {
     }
   };
 
-  const isVideoKind = (x) => String(x?.tipo || '').toUpperCase().startsWith('VID');
-
   // Helpers de mídia
   const mediaBase = (it) => it.src || `${API_BASE}${it.url}`;
   const withCacheBuster = (base) => base + (base.includes('?') ? '&' : '?') + '_=' + Date.now();
@@ -337,23 +334,12 @@ const parseMaybe = (s) => {
       }
     };
 
-    const confirmFirstFrameOrRetry = () => {
-      if ('requestVideoFrameCallback' in videoEl) {
-        try {
-          videoEl.requestVideoFrameCallback((_now, meta) => {
-            if (!meta || meta.presentedFrames === 0) retryWithNewSrc();
-          });
-        } catch {}
-      }
-    };
-
     const retryWithNewSrc = () => {
       if (retriedOnce) return;
       retriedOnce = true;
       try { videoEl.pause(); } catch {}
       try { videoEl.removeAttribute('src'); } catch {}
       try { videoEl.load(); } catch {}
-
       const src2 = withCacheBuster(url);
       videoEl.src = src2;
       try { videoEl.load(); } catch {}
@@ -394,7 +380,7 @@ const parseMaybe = (s) => {
     };
     videoEl.onloadeddata = () => { safePlay(true); };
     videoEl.oncanplay = () => { if (videoEl.paused) safePlay(true); };
-    videoEl.onplaying = () => { stopFail(); confirmFirstFrameOrRetry(); tryUnmuteIfAllowed(); };
+    videoEl.onplaying = () => { stopFail(); tryUnmuteIfAllowed(); };
     videoEl.onstalled = () => { retryWithNewSrc(); };
     videoEl.onended = () => stopOverlay(true);
     videoEl.onerror = () => stopOverlay(true);
@@ -419,8 +405,10 @@ const parseMaybe = (s) => {
     const base = mediaBase(current);
 
     if (isVideoKind(current)) {
+      // vídeo: deixa rolar até o fim (onended fecha), sem usar “tempo na tela”
       startVideoWithSafeAutoplay(videoRef.current, base);
     } else {
+      // imagem: ainda usa um tempo para sair (fallback 10s se nada vier)
       const durMs =
         Number(current.image_duration_ms) ||
         Number(current.duracao_ms) ||
