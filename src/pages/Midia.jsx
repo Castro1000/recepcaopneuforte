@@ -1,4 +1,3 @@
-// src/pages/Midia.jsx
 import React, { useEffect, useRef, useState } from "react";
 import "./Midia.css";
 
@@ -9,6 +8,7 @@ const API_BASE = "https://recepcaopneuforte.onrender.com";
 const DEFAULT_DURATION_MS = 8000;   // 8s para imagens
 const DEFAULT_SEQ_STEP_MS = 10000;  // 10s
 
+// utils
 const toInt = (v, d) => {
   const n = Number(v);
   return Number.isFinite(n) && n >= 0 ? Math.floor(n) : d;
@@ -28,24 +28,19 @@ const msToHuman = (ms) => {
   return rs ? `${m}m ${rs}s` : `${m}m`;
 };
 
-// yyyy-MM-ddTHH:mm -> "yyyy-MM-dd HH:mm:00"
-const toMySQLLocal = (val) => {
+// >>> Enviar SEMPRE em UTC (corrige -4h que aparecia no banco):
+// recebe "YYYY-MM-DDTHH:mm" do <input type="datetime-local">
+// e devolve "YYYY-MM-DD HH:mm:00" em UTC (equivalente ao .toISOString()).
+const toMySQLUTC = (val) => {
   if (!val) return "";
-  const [d, t] = String(val).split("T");
-  return `${d} ${t}:00`;
-};
-
-// normaliza valor vindo da API para o input datetime-local (yyyy-MM-ddTHH:mm)
-const toInputLocal = (val) => {
-  if (!val) return "";
-  // corta milissegundos/offset e troca espaço por T
-  return String(val)
-    .replace(" ", "T")
-    .replace(/(\.\d+)?(Z|[+\-]\d{2}:?\d{2})?$/, "")
-    .slice(0, 16);
+  // new Date(val) interpreta como horário LOCAL do navegador
+  // .toISOString() devolve UTC (ex.: 18:20Z se local for 14:20 -04:00)
+  const iso = new Date(val).toISOString();           // "2025-08-29T18:20:00.000Z"
+  return iso.slice(0, 19).replace("T", " ");         // "2025-08-29 18:20:00"
 };
 
 export default function Midia() {
+  // grava ?token=... no localStorage (útil no Render)
   useEffect(() => {
     const t = new URLSearchParams(window.location.search).get("token");
     if (t) localStorage.setItem("token", t);
@@ -53,6 +48,7 @@ export default function Midia() {
 
   const token = (localStorage.getItem("token") || "").trim();
 
+  // --- helper de URL ---
   const makeUrl = (pathOrFull) => {
     if (!pathOrFull) return "";
     if (/^(https?:)?\/\//i.test(pathOrFull) || pathOrFull.startsWith("blob:") || pathOrFull.startsWith("data:")) {
@@ -61,6 +57,7 @@ export default function Midia() {
     return `${API_BASE}${pathOrFull}`;
   };
 
+  // --- fetch com auth ---
   async function apiAuth(path, opt = {}) {
     const headers = opt.headers ? { ...opt.headers } : {};
     if (opt.body && !(opt.body instanceof FormData)) headers["Content-Type"] = "application/json";
@@ -85,11 +82,13 @@ export default function Midia() {
     try { return await resp.json(); } catch { return {}; }
   }
 
+  // --- estado ---
   const [midias, setMidias] = useState([]);
   const [msg, setMsg] = useState("");
   const [err, setErr] = useState("");
   const [isSaving, setIsSaving] = useState(false);
 
+  // input de arquivo (para reset real)
   const fileInputRef = useRef(null);
   const [fileInputKey, setFileInputKey] = useState(0);
 
@@ -104,8 +103,10 @@ export default function Midia() {
     seq_step_sec: 10,      // imagens (multi)
   });
 
+  // edição
   const [edit, setEdit] = useState(null); // {id, titulo, data_inicio, data_fim, intervalo_minutos}
 
+  // --- carregar lista ---
   const carregarMidias = async () => {
     setErr(""); setMsg("");
     try {
@@ -124,6 +125,7 @@ export default function Midia() {
 
   useEffect(() => { carregarMidias(); /* eslint-disable-line */ }, []);
 
+  // --- seleção de arquivos ---
   const onFiles = (e) => {
     const list = Array.from(e.target.files || []);
     if (!list.length) return setForm((f) => ({ ...f, files: [] }));
@@ -138,6 +140,7 @@ export default function Midia() {
     setFileInputKey((k) => k + 1);
   };
 
+  // --- salvar (upload) ---
   const salvar = async () => {
     if (isSaving) return;
     setErr(""); setMsg("");
@@ -169,15 +172,21 @@ export default function Midia() {
         const fd = new FormData();
         fd.append("titulo", form.titulo || "");
         fd.append("arquivo", file);
-        fd.append("data_inicio", toMySQLLocal(form.data_inicio));
-        fd.append("data_fim",     toMySQLLocal(form.data_fim));
+
+        // >>> Enviar datas em UTC (corrige -4h no banco)
+        fd.append("data_inicio", toMySQLUTC(form.data_inicio));
+        fd.append("data_fim",     toMySQLUTC(form.data_fim));
+
+        // nome no banco é intervalo_minutos (plural)
         fd.append("intervalo_minutos", String(intervaloMin));
 
+        // Só para imagens
         if (!isVideo) {
           fd.append("image_duration_ms", String(image_duration_ms));
+          // dicas para o backend (opcional)
           fd.append("seq_enabled", String(seq_enabled ? 1 : 0));
           fd.append("seq_count", String(seq_enabled ? form.files.length : 1));
-          fd.append("seq_step_ms", String(seq_enabled ? seq_step_ms : 0));
+          fd.append("seq_step_ms", String(seq_step_ms));
         }
 
         const endpoint = `/api/midia?ts=${Date.now()}&uid=${Math.random().toString(36).slice(2)}`;
@@ -193,6 +202,7 @@ export default function Midia() {
             : "Imagem enviada com sucesso."
       );
 
+      // reset
       setForm({
         titulo: "",
         files: [],
@@ -213,6 +223,7 @@ export default function Midia() {
     }
   };
 
+  // --- excluir ---
   const excluir = async (id) => {
     setErr(""); setMsg("");
     try {
@@ -229,12 +240,15 @@ export default function Midia() {
     }
   };
 
+  // --- editar (PATCH simples com JSON) ---
   const abrirEdicao = (m) => {
+    // Campos exibidos no modal em "local" para o usuário editar
+    const toLocalInput = (s) => (s ? s.replace("T", " ").slice(0,16) : "");
     setEdit({
       id: m.id,
       titulo: m.titulo || "",
-      data_inicio: toInputLocal(m.data_inicio),
-      data_fim: toInputLocal(m.data_fim),
+      data_inicio: toLocalInput(m.data_inicio),
+      data_fim:     toLocalInput(m.data_fim),
       intervalo_minutos: Number(m.intervalo_minutos ?? m.intervalo_minuto ?? 15)
     });
   };
@@ -244,8 +258,9 @@ export default function Midia() {
       setErr(""); setMsg("");
       const body = {
         titulo: edit.titulo,
-        data_inicio: toMySQLLocal(edit.data_inicio),
-        data_fim:     toMySQLLocal(edit.data_fim),
+        // >>> Converter para UTC antes de enviar (mesmo raciocínio do upload)
+        data_inicio: toMySQLUTC(edit.data_inicio?.replace(" ", "T")),
+        data_fim:     toMySQLUTC(edit.data_fim?.replace(" ", "T")),
         intervalo_minutos: toInt(edit.intervalo_minutos, 15),
       };
       await apiAuth(`/api/midia/${edit.id}`, {
@@ -327,7 +342,7 @@ export default function Midia() {
             />
           </div>
 
-          {/* Tempo na tela só para IMAGENS */}
+          {/* Tempo na tela só faz sentido para IMAGENS */}
           {!isVideoSel && (
             <div className="grid-2">
               <div className="field">
@@ -431,7 +446,7 @@ export default function Midia() {
                 <label>Início</label>
                 <input
                   type="datetime-local"
-                  value={edit.data_inicio}
+                  value={edit.data_inicio?.replace(" ", "T")}
                   onChange={(e) => setEdit({ ...edit, data_inicio: e.target.value })}
                 />
               </div>
@@ -439,7 +454,7 @@ export default function Midia() {
                 <label>Término</label>
                 <input
                   type="datetime-local"
-                  value={edit.data_fim}
+                  value={edit.data_fim?.replace(" ", "T")}
                   onChange={(e) => setEdit({ ...edit, data_fim: e.target.value })}
                 />
               </div>
