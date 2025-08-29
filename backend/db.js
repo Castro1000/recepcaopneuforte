@@ -9,10 +9,8 @@ let ssl; // undefined por padrão
 if (sslMode === 'disable') {
   ssl = undefined;
 } else if (sslMode === 'require' || sslMode === 'skip-verify') {
-  // modo mais simples para certificado autoassinado
   ssl = { rejectUnauthorized: false };
 } else if (sslMode === 'verify-ca') {
-  // se você tiver o CA (opcional)
   const fs = require('fs');
   const ca = process.env.DB_SSL_CA_PATH
     ? fs.readFileSync(process.env.DB_SSL_CA_PATH, 'utf8')
@@ -39,26 +37,28 @@ const pool = mysql.createPool({
 
   multipleStatements: false,
   charset: 'utf8mb4',
+
+  // Mantém DATETIME/TIMESTAMP como string, sem conversão automática de fuso
   dateStrings: true,
 
-  ssl, // <<-- aqui entra o SSL ajustado
+  ssl, // <<-- SSL ajustado acima
 });
 
 const p = pool.promise();
 
+// >>> Única mudança: sessão no fuso de Manaus (UTC-04:00). Antes estava '+00:00'.
 pool.on('connection', (conn) => {
-  conn.query("SET time_zone = '+00:00'");
+  conn.query("SET time_zone = '-04:00'");
 });
+
 pool.on('error', (err) => {
   console.error('[mysql pool error]', err.code || err.message);
 });
-
 
 p.query('SELECT 1')
   .then(() => console.log('✅ MySQL conectado (pool ativo)'))
   .catch((e) => console.error('❌ Falha ao conectar MySQL:', e.code || e.message));
 
-// keepalive para a Render/Railway não matar o socket por inatividade
 setInterval(async () => {
   try { await p.query('SELECT 1'); }
   catch (e) { console.error('[mysql keepalive failed]', e.code || e.message); }
