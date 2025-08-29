@@ -2,14 +2,12 @@
 import React, { useEffect, useRef, useState } from "react";
 import "./Midia.css";
 
-// ===== Ajuste conforme ambiente =====
 const API_BASE = "https://recepcaopneuforte.onrender.com";
 // const API_BASE = "http://localhost:3001";
 
-const DEFAULT_DURATION_MS = 8000;   // imagens
-const DEFAULT_SEQ_STEP_MS = 10000;  // imagens
+const DEFAULT_DURATION_MS = 8000;  // só para imagens
+const DEFAULT_SEQ_STEP_MS = 10000;
 
-// ===== Helpers =====
 const toInt = (v, d) => {
   const n = Number(v);
   return Number.isFinite(n) && n >= 0 ? Math.floor(n) : d;
@@ -29,57 +27,27 @@ const msToHuman = (ms) => {
   return rs ? `${m}m ${rs}s` : `${m}m`;
 };
 
-// Converte "2025-08-29T14:36" (local) -> string UTC "YYYY-MM-DD HH:MM:SS"
-const localInputToMySQLUTC = (val) => {
+// datetime-local -> "YYYY-MM-DD HH:mm:00"
+const toMySQLLocal = (val) => {
   if (!val) return "";
-  const d = new Date(val); // interpreta como horário local do usuário
-  const iso = new Date(d.getTime() - d.getTimezoneOffset() * 60000)
-    .toISOString()
-    .slice(0, 19) // YYYY-MM-DDTHH:mm:ss
-    .replace("T", " ");
-  return iso;
+  const [d, t] = String(val).split("T");
+  return `${d} ${t}:00`;
 };
-
-// Interpreta string vinda do servidor:
-//  - se for "YYYY-MM-DD HH:mm[:ss]" (naive), trata como UTC e devolve Date local
-//  - se vier com Z/offset, deixa o JS converter
-const serverStringToLocalDate = (s) => {
-  if (!s) return null;
-  const str = String(s).trim();
-  const m = str.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/);
-  if (m && !/[zZ]|[+\-]\d{2}:?\d{2}$/.test(str)) {
-    const [, y, M, d, h, mi, sec = "00"] = m;
-    const msUtc = Date.UTC(+y, +M - 1, +d, +h, +mi, +sec);
-    return new Date(msUtc); // objeto Date na hora local
-  }
-  const t = Date.parse(str);
-  return Number.isFinite(t) ? new Date(t) : null;
-};
-
-// Para preencher <input type="datetime-local">
-const toInputValueFromServer = (s) => {
-  const d = serverStringToLocalDate(s);
-  if (!d || isNaN(d)) return "";
-  const pad = (n) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(
-    d.getHours()
-  )}:${pad(d.getMinutes())}`;
-};
+// mostrar sem conversão de fuso
+const showLocal = (s) => (s ? String(s).replace("T", " ").replace(/Z$/, "") : "");
 
 export default function Midia() {
-  // grava ?token=... no localStorage (útil no Render)
+  // token na URL
   useEffect(() => {
     const t = new URLSearchParams(window.location.search).get("token");
     if (t) localStorage.setItem("token", t);
   }, []);
-
   const token = (localStorage.getItem("token") || "").trim();
 
   const makeUrl = (pathOrFull) => {
     if (!pathOrFull) return "";
-    if (/^(https?:)?\/\//i.test(pathOrFull) || pathOrFull.startsWith("blob:") || pathOrFull.startsWith("data:")) {
+    if (/^(https?:)?\/\//i.test(pathOrFull) || pathOrFull.startsWith("blob:") || pathOrFull.startsWith("data:"))
       return pathOrFull;
-    }
     return `${API_BASE}${pathOrFull}`;
   };
 
@@ -87,27 +55,16 @@ export default function Midia() {
     const headers = opt.headers ? { ...opt.headers } : {};
     if (opt.body && !(opt.body instanceof FormData)) headers["Content-Type"] = "application/json";
     if (token) headers["Authorization"] = `Bearer ${token}`;
-
-    const resp = await fetch(makeUrl(path), {
-      ...opt,
-      headers,
-      cache: "no-store",
-      credentials: "omit",
-    });
-
+    const resp = await fetch(makeUrl(path), { ...opt, headers, cache: "no-store", credentials: "omit" });
     if (!resp.ok) {
       let detail = "";
       try { detail = await resp.text(); } catch {}
-      if (resp.status === 401) {
-        throw new Error("token_required: faça login neste domínio para continuar.");
-      }
+      if (resp.status === 401) throw new Error("token_required");
       throw new Error(detail || `HTTP ${resp.status}`);
     }
-
     try { return await resp.json(); } catch { return {}; }
   }
 
-  // --- estado ---
   const [midias, setMidias] = useState([]);
   const [msg, setMsg] = useState("");
   const [err, setErr] = useState("");
@@ -122,15 +79,13 @@ export default function Midia() {
     data_inicio: "",
     data_fim: "",
     intervalo_minutos: 15,
-    durationValue: 8,      // images
+    durationValue: 8,     // imagens
     durationUnit: "s",
-    seq_step_sec: 10,      // images (multi)
+    seq_step_sec: 10,     // imagens+
   });
 
-  // edição
   const [edit, setEdit] = useState(null);
 
-  // --- carregar lista ---
   const carregarMidias = async () => {
     setErr(""); setMsg("");
     try {
@@ -138,49 +93,37 @@ export default function Midia() {
       setMidias(Array.isArray(data) ? data : []);
     } catch (e) {
       console.error(e);
-      setErr(
-        e.message?.includes("token_required")
-          ? "Não foi possível carregar as mídias: faça login neste domínio."
-          : "Não foi possível carregar a lista de mídias."
+      setErr(e.message === "token_required"
+        ? "Não foi possível carregar as mídias: faça login neste domínio."
+        : "Não foi possível carregar a lista de mídias."
       );
       setMidias([]);
     }
   };
-
   useEffect(() => { carregarMidias(); /* eslint-disable-line */ }, []);
 
-  // --- seleção de arquivos ---
   const onFiles = (e) => {
     const list = Array.from(e.target.files || []);
     if (!list.length) return setForm((f) => ({ ...f, files: [] }));
     const firstVideo = list.find((f) => f.type.startsWith("video/"));
-    if (firstVideo) return setForm((f) => ({ ...f, files: [firstVideo] })); // apenas 1 vídeo
+    if (firstVideo) return setForm((f) => ({ ...f, files: [firstVideo] }));
     const imgs = list.filter((f) => f.type.startsWith("image/"));
     setForm((f) => ({ ...f, files: imgs }));
   };
-
   const limparInputArquivo = () => {
     if (fileInputRef.current) fileInputRef.current.value = "";
     setFileInputKey((k) => k + 1);
   };
 
-  // --- salvar (upload) ---
+  // salvar (upload)
   const salvar = async () => {
     if (isSaving) return;
     setErr(""); setMsg("");
 
-    if (!form.files.length) {
-      setErr("Selecione um vídeo ou imagens.");
-      return;
-    }
-    if (form.data_inicio && form.data_fim && new Date(form.data_inicio) > new Date(form.data_fim)) {
-      setErr("O início não pode ser depois do término.");
-      return;
-    }
-    if (!token) {
-      setErr("É necessário estar logado neste domínio (token ausente).");
-      return;
-    }
+    if (!form.files.length) return setErr("Selecione um vídeo ou imagens.");
+    if (form.data_inicio && form.data_fim && new Date(form.data_inicio) > new Date(form.data_fim))
+      return setErr("O início não pode ser depois do término.");
+    if (!token) return setErr("É necessário estar logado neste domínio (token ausente).");
 
     const isVideo = form.files[0].type.startsWith("video/");
     const image_duration_ms = isVideo ? "" : humanToMs(form.durationValue, form.durationUnit);
@@ -190,40 +133,29 @@ export default function Midia() {
 
     try {
       setIsSaving(true);
-      let okCount = 0;
+      let ok = 0;
 
       for (const file of form.files) {
         const fd = new FormData();
         fd.append("titulo", form.titulo || "");
         fd.append("arquivo", file);
-
-        // Enviar **em UTC** no formato do MySQL (sem Z) para bater com o servidor/DB (UTC).
-        fd.append("data_inicio", localInputToMySQLUTC(form.data_inicio));
-        fd.append("data_fim",     localInputToMySQLUTC(form.data_fim));
-
+        fd.append("data_inicio", toMySQLLocal(form.data_inicio));
+        fd.append("data_fim",     toMySQLLocal(form.data_fim));
         fd.append("intervalo_minutos", String(intervaloMin));
 
         if (!isVideo) {
           fd.append("image_duration_ms", String(image_duration_ms));
           fd.append("seq_enabled", String(seq_enabled ? 1 : 0));
-          fd.append("seq_count", String(seq_enabled ? form.files.length : 1));
-          fd.append("seq_step_ms", String(seq_enabled ? seq_step_ms : 0));
+          fd.append("seq_step_ms", String(seq_step_ms));
         }
 
-        const endpoint = `/api/midia?ts=${Date.now()}&uid=${Math.random().toString(36).slice(2)}`;
-        await apiAuth(endpoint, { method: "POST", body: fd });
-        okCount++;
+        await apiAuth(`/api/midia?ts=${Date.now()}`, { method: "POST", body: fd });
+        ok++;
       }
 
-      setMsg(
-        form.files[0].type.startsWith("video/")
-          ? "Vídeo enviado com sucesso."
-          : okCount > 1
-            ? `Imagens enviadas: ${okCount}.`
-            : "Imagem enviada com sucesso."
-      );
+      setMsg(isVideo ? "Vídeo enviado com sucesso."
+           : ok > 1 ? `Imagens enviadas: ${ok}.` : "Imagem enviada com sucesso.");
 
-      // reset
       setForm({
         titulo: "",
         files: [],
@@ -235,7 +167,7 @@ export default function Midia() {
         seq_step_sec: 10,
       });
       limparInputArquivo();
-      await carregarMidias();
+      carregarMidias();
     } catch (e) {
       console.error(e);
       setErr(`Falha ao salvar: ${e.message}`);
@@ -244,7 +176,6 @@ export default function Midia() {
     }
   };
 
-  // --- excluir ---
   const excluir = async (id) => {
     setErr(""); setMsg("");
     try {
@@ -253,38 +184,30 @@ export default function Midia() {
       carregarMidias();
     } catch (e) {
       console.error(e);
-      setErr(
-        e.message?.includes("token_required")
-          ? "Erro ao excluir: faça login neste domínio."
-          : "Erro ao excluir."
-      );
+      setErr(e.message === "token_required" ? "Erro ao excluir: faça login neste domínio." : "Erro ao excluir.");
     }
   };
 
-  // --- editar (PATCH) ---
+  // editar
   const abrirEdicao = (m) => {
     setEdit({
       id: m.id,
       titulo: m.titulo || "",
-      data_inicio: toInputValueFromServer(m.data_inicio),
-      data_fim: toInputValueFromServer(m.data_fim),
-      intervalo_minutos: Number(m.intervalo_minutos ?? m.intervalo_minuto ?? 15),
+      data_inicio: m.data_inicio || "",
+      data_fim: m.data_fim || "",
+      intervalo_minutos: Number(m.intervalo_minutos ?? 15),
     });
   };
-
   const salvarEdicao = async () => {
     try {
       setErr(""); setMsg("");
       const body = {
         titulo: edit.titulo,
-        data_inicio: localInputToMySQLUTC(edit.data_inicio),
-        data_fim:     localInputToMySQLUTC(edit.data_fim),
+        data_inicio: toMySQLLocal(edit.data_inicio?.replace(" ", "T")),
+        data_fim:     toMySQLLocal(edit.data_fim?.replace(" ", "T")),
         intervalo_minutos: toInt(edit.intervalo_minutos, 15),
       };
-      await apiAuth(`/api/midia/${edit.id}`, {
-        method: "PATCH",
-        body: JSON.stringify(body),
-      });
+      await apiAuth(`/api/midia/${edit.id}`, { method: "PATCH", body: JSON.stringify(body) });
       setMsg("Mídia atualizada.");
       setEdit(null);
       carregarMidias();
@@ -295,7 +218,6 @@ export default function Midia() {
   };
 
   const resolveUrl = (u) => makeUrl(u);
-
   const isMultiImage = form.files.length > 1 && form.files.every((f) => f.type.startsWith("image/"));
   const isVideoSel = form.files.length === 1 && form.files[0]?.type.startsWith("video/");
   const tempoMs = humanToMs(form.durationValue, form.durationUnit);
@@ -324,7 +246,7 @@ export default function Midia() {
               multiple
               onChange={onFiles}
             />
-            {form.files.length > 0 && (
+            {!!form.files.length && (
               <div className="muted tiny">
                 {isVideoSel ? `1 vídeo selecionado` : `${form.files.length} imagem(ns) selecionada(s)`}
               </div>
@@ -360,7 +282,7 @@ export default function Midia() {
             />
           </div>
 
-          {/* Tempo na tela apenas para IMAGENS */}
+          {/* Tempo só para IMAGENS */}
           {!isVideoSel && (
             <div className="grid-2">
               <div className="field">
@@ -409,44 +331,43 @@ export default function Midia() {
       {/* LISTA */}
       <h3>Mídias Cadastradas</h3>
       <ul className="midia-lista">
-        {midias.map((m) => {
-          const dIni = serverStringToLocalDate(m.data_inicio);
-          const dFim = serverStringToLocalDate(m.data_fim);
-          return (
-            <li key={m.id}>
-              <div className="item-grid">
-                <div>
-                  <strong>{m.titulo || "(sem título)"}</strong>
-                  <div className="muted meta">
-                    {(m.tipo === "IMG" ? "Imagem" : "Vídeo")}
-                    {m.tipo === "IMG"
-                      ? ` · fica ${msToHuman(Number(m.image_duration_ms) || DEFAULT_DURATION_MS)} na tela`
-                      : ` · duração do próprio vídeo`}
-                    {m.intervalo_minutos != null ? ` · Intervalo: ${m.intervalo_minutos} min` : ""}
-                  </div>
-                  {(m.data_inicio || m.data_fim) && (
-                    <div className="muted meta">
-                      {dIni ? `Início: ${dIni.toLocaleString()}` : ""}
-                      {dIni && dFim ? " · " : ""}
-                      {dFim ? `Término: ${dFim.toLocaleString()}` : ""}
-                    </div>
-                  )}
-                  <div className="preview">
-                    {m.tipo === "IMG" ? (
-                      <img src={resolveUrl(m.url)} alt={m.titulo || "img"} />
-                    ) : (
-                      <video src={resolveUrl(m.url)} muted controls />
-                    )}
-                  </div>
+        {midias.map((m) => (
+          <li key={m.id}>
+            <div className="item-grid">
+              <div>
+                <strong>{m.titulo || "(sem título)"}</strong>
+                <div className="muted meta">
+                  {(m.tipo === "IMG" ? "Imagem" : "Vídeo")}
+                  {m.tipo === "IMG"
+                    ? ` · fica ${msToHuman(Number(m.image_duration_ms) || DEFAULT_DURATION_MS)} na tela`
+                    : ` · duração do próprio vídeo`}
+                  {m.intervalo_minutos != null ? ` · Intervalo: ${m.intervalo_minutos} min` : ""}
                 </div>
-                <div className="right-actions">
-                  <button className="btn" onClick={() => abrirEdicao(m)}>Editar</button>
-                  <button className="btn danger" onClick={() => excluir(m.id)}>Excluir</button>
+
+                {(m.data_inicio || m.data_fim) && (
+                  <div className="muted meta">
+                    {m.data_inicio ? `Início: ${showLocal(m.data_inicio)}` : ""}
+                    {m.data_inicio && m.data_fim ? " · " : ""}
+                    {m.data_fim ? `Término: ${showLocal(m.data_fim)}` : ""}
+                  </div>
+                )}
+
+                <div className="preview">
+                  {m.tipo === "IMG" ? (
+                    <img src={resolveUrl(m.url)} alt={m.titulo || "img"} />
+                  ) : (
+                    <video src={resolveUrl(m.url)} muted controls />
+                  )}
                 </div>
               </div>
-            </li>
-          );
-        })}
+
+              <div className="right-actions">
+                <button className="btn" onClick={() => abrirEdicao(m)}>Editar</button>
+                <button className="btn danger" onClick={() => excluir(m.id)}>Excluir</button>
+              </div>
+            </div>
+          </li>
+        ))}
         {!midias.length && <li className="muted empty">Sem itens</li>}
       </ul>
 
@@ -468,7 +389,7 @@ export default function Midia() {
                 <label>Início</label>
                 <input
                   type="datetime-local"
-                  value={edit.data_inicio}
+                  value={edit.data_inicio?.replace(" ", "T")}
                   onChange={(e) => setEdit({ ...edit, data_inicio: e.target.value })}
                 />
               </div>
@@ -476,7 +397,7 @@ export default function Midia() {
                 <label>Término</label>
                 <input
                   type="datetime-local"
-                  value={edit.data_fim}
+                  value={edit.data_fim?.replace(" ", "T")}
                   onChange={(e) => setEdit({ ...edit, data_fim: e.target.value })}
                 />
               </div>
