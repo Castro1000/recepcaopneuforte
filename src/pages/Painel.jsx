@@ -45,7 +45,7 @@ export default function Painel() {
   const suppressUntilRef = useRef(0);
   const overlayBlockEndRef = useRef(0);
 
-  // Token dinâmico sempre que precisar (evita 403 por header “congelado”)
+  // Token dinâmico
   const getToken = () => (localStorage.getItem('token') || '').trim();
   const getAuthHeaders = () => {
     const tk = getToken();
@@ -67,7 +67,7 @@ export default function Painel() {
     }
   };
 
-  // ------- Helpers de fetch JSON com token -------
+  // ------- Helpers de fetch JSON -------
   const fetchJson = async (path) => {
     const r = await fetch(`${API_BASE}${path}`, { cache: 'no-store', headers: getAuthHeaders() });
     if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
@@ -86,7 +86,6 @@ export default function Painel() {
         titulo: m.titulo || '',
         data_inicio: m.data_inicio || null,
         data_fim: m.data_fim || null,
-        // aceita singular/plural vindo do backend
         intervalo_minutos: m.intervalo_minutos ?? m.intervalo_minuto ?? 0,
         image_duration_ms:
           m.image_duration_ms ??
@@ -103,14 +102,14 @@ export default function Painel() {
     try {
       let items = [];
       try {
-        const j = await fetchJson('/api/playlist'); // pode exigir token
+        const j = await fetchJson('/api/playlist');
         items = Array.isArray(j) ? j : Array.isArray(j?.items) ? j.items : [];
       } catch (e) {
         console.warn('playlist falhou:', e?.message || e);
       }
 
       if (!Array.isArray(items) || items.length === 0) {
-        const j2 = await fetchJson('/api/midia');   // fallback autenticado
+        const j2 = await fetchJson('/api/midia');
         items = Array.isArray(j2) ? j2 : [];
       }
 
@@ -148,29 +147,30 @@ export default function Painel() {
   }, [fila, carroFinalizado]);
 
   // ================== Agendamento / Overlay ==================
-  // CORREÇÃO DE FUSO:
-  // Quando o DB tem "YYYY-MM-DD HH:mm:ss" sem timezone (ex.: "2025-08-29 09:43:00"),
-  // interpretamos como LOCAL + somamos o offset local para compensar os -4h salvos no servidor.
+
+  // >>> Parser de datas CORRIGIDO <<<
+  // - Se tiver Z/±HH:MM: usa Date.parse (respeita timezone)
+  // - Se vier sem timezone (AAAA-MM-DD HH:mm[:ss] ou ...THH:mm[:ss]): trata como LOCAL
   const parseMaybe = (s) => {
     if (s == null || s === '') return null;
+    if (typeof s === 'number') return s;
     const str = String(s).trim();
 
-    // "YYYY-MM-DD HH:mm[:ss]" OU "YYYY-MM-DDTHH:mm[:ss]" (sem timezone)
-    let m = str.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/);
-    if (m) {
-      const [, y, M, d, h, mi, sec='00'] = m;
-      const tLocal = new Date(+y, +M - 1, +d, +h, +mi, +sec).getTime();
-      // getTimezoneOffset() = minutos para somar ao LOCAL e chegar no UTC (Manaus ~ 240)
-      // Somamos esse offset para "trazer" o horário do DB ao horário local correto.
-      const FIX_MIN = new Date().getTimezoneOffset();
-      return tLocal + FIX_MIN * 60 * 1000;
+    // com timezone explícito
+    if (/[zZ]|[+\-]\d{2}:?\d{2}$/.test(str)) {
+      const t = Date.parse(str);
+      return Number.isFinite(t) ? t : null;
     }
 
-    // ISO com Z/offset → deixa o navegador converter normalmente
-    m = str.match(
-      /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?(?:Z|[+\-]\d{2}:?\d{2})$/
+    // YYYY-MM-DD HH:mm[:ss] ou YYYY-MM-DDTHH:mm[:ss] -> LOCAL
+    let m = str.match(
+      /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/
     );
-    if (m) return Date.parse(str);
+    if (m) {
+      const [, y, M, d, h, mi, sec = '00'] = m;
+      const t = new Date(+y, +M - 1, +d, +h, +mi, +sec).getTime();
+      return Number.isFinite(t) ? t : null;
+    }
 
     // fallback
     const t = Date.parse(str);
@@ -271,11 +271,11 @@ export default function Painel() {
   const mediaBase = (it) => it.src || `${API_BASE}${it.url}`;
   const withCacheBuster = (base) => base + (base.includes('?') ? '&' : '?') + '_=' + Date.now();
 
-  // ============ PLAY de VÍDEO: anti-tela-preta + unmuted-first + retries ============
+  // ============ PLAY de VÍDEO ============
   const startVideoWithSafeAutoplay = (videoEl, url) => {
     if (!videoEl) return;
 
-    // atributos seguros ANTES de definir src
+    // atributos seguros
     videoEl.setAttribute('muted', '');
     videoEl.muted = true;
     videoEl.playsInline = true;
@@ -288,7 +288,6 @@ export default function Painel() {
 
     const src = withCacheBuster(url);
 
-    // limpa handlers anteriores e estado
     videoEl.onended = null;
     videoEl.onerror = null;
     videoEl.onloadeddata = null;
@@ -341,11 +340,10 @@ export default function Painel() {
 
     const stopFail = () => { if (failTimer) { clearTimeout(failTimer); failTimer = null; } };
 
-    // tenta unmuted primeiro
     const safePlay = async (tryUnmutedFirst = true) => {
       try {
         if (tryUnmutedFirst) {
-          videoEl.muted = !(VIDEO_AUDIO_ENABLED);
+          videoEl.muted = !VIDEO_AUDIO_ENABLED;
         } else {
           videoEl.muted = true;
         }
@@ -377,12 +375,11 @@ export default function Painel() {
     videoEl.onended     = () => stopOverlay(true);
     videoEl.onerror     = () => stopOverlay(true);
 
-    // fail-safe: 8s sem “playing” → fecha overlay (evita ficar preto)
     failTimer = setTimeout(() => {
       if (videoEl.paused || videoEl.readyState < 2) stopOverlay(true);
     }, 8000);
   };
-  // ========================================================================
+  // ======================================
 
   // toca item atual
   useEffect(() => {
@@ -414,7 +411,7 @@ export default function Painel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [overlayOn, overlayIdx]);
 
-  // ================== Sockets (finalização + novo carro) ==================
+  // ================== Sockets ==================
   useEffect(() => {
     const onCarroFinalizado = async (carro) => {
       stopOverlay(true);

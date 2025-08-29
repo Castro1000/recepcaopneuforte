@@ -1,3 +1,4 @@
+// src/pages/Midia.jsx
 import React, { useEffect, useRef, useState } from "react";
 import "./Midia.css";
 
@@ -5,8 +6,8 @@ import "./Midia.css";
 const API_BASE = "https://recepcaopneuforte.onrender.com";
 // const API_BASE = "http://localhost:3001";
 
-const DEFAULT_DURATION_MS = 8000;   // 8s para imagens
-const DEFAULT_SEQ_STEP_MS = 10000;  // 10s
+const DEFAULT_DURATION_MS = 8000;   // imagens
+const DEFAULT_SEQ_STEP_MS = 10000;  // imagens
 
 // utils
 const toInt = (v, d) => {
@@ -28,15 +29,23 @@ const msToHuman = (ms) => {
   return rs ? `${m}m ${rs}s` : `${m}m`;
 };
 
-// >>> Enviar SEMPRE em UTC (corrige -4h que aparecia no banco):
-// recebe "YYYY-MM-DDTHH:mm" do <input type="datetime-local">
-// e devolve "YYYY-MM-DD HH:mm:00" em UTC (equivalente ao .toISOString()).
-const toMySQLUTC = (val) => {
+// datetime-local "YYYY-MM-DDTHH:mm" -> "YYYY-MM-DD HH:mm:00" (sem timezone)
+const toMySQLLocal = (val) => {
   if (!val) return "";
-  // new Date(val) interpreta como horário LOCAL do navegador
-  // .toISOString() devolve UTC (ex.: 18:20Z se local for 14:20 -04:00)
-  const iso = new Date(val).toISOString();           // "2025-08-29T18:20:00.000Z"
-  return iso.slice(0, 19).replace("T", " ");         // "2025-08-29 18:20:00"
+  const [d, t] = String(val).split("T");
+  return `${d} ${t}:00`;
+};
+
+// >>> Formatador para EXIBIR datas na tela sem deslocar fuso <<<
+// - Se a string tiver Z/±HH:MM -> formata para horário LOCAL.
+// - Senão, devolve a própria string (ou troca 'T' por ' ') por ser LOCAL.
+const fmtLocal = (value) => {
+  if (!value) return "";
+  const s = String(value);
+  if (/[zZ]|[+\-]\d{2}:?\d{2}$/.test(s)) {
+    try { return new Date(s).toLocaleString(); } catch { return s; }
+  }
+  return s.replace("T", " ");
 };
 
 export default function Midia() {
@@ -172,21 +181,16 @@ export default function Midia() {
         const fd = new FormData();
         fd.append("titulo", form.titulo || "");
         fd.append("arquivo", file);
-
-        // >>> Enviar datas em UTC (corrige -4h no banco)
-        fd.append("data_inicio", toMySQLUTC(form.data_inicio));
-        fd.append("data_fim",     toMySQLUTC(form.data_fim));
-
-        // nome no banco é intervalo_minutos (plural)
+        // datas como LOCAL (sem timezone)
+        fd.append("data_inicio", toMySQLLocal(form.data_inicio));
+        fd.append("data_fim",     toMySQLLocal(form.data_fim));
         fd.append("intervalo_minutos", String(intervaloMin));
 
-        // Só para imagens
         if (!isVideo) {
           fd.append("image_duration_ms", String(image_duration_ms));
-          // dicas para o backend (opcional)
           fd.append("seq_enabled", String(seq_enabled ? 1 : 0));
           fd.append("seq_count", String(seq_enabled ? form.files.length : 1));
-          fd.append("seq_step_ms", String(seq_step_ms));
+          fd.append("seq_step_ms", String(seq_enabled ? seq_step_ms : 0));
         }
 
         const endpoint = `/api/midia?ts=${Date.now()}&uid=${Math.random().toString(36).slice(2)}`;
@@ -240,15 +244,27 @@ export default function Midia() {
     }
   };
 
-  // --- editar (PATCH simples com JSON) ---
+  // --- editar ---
   const abrirEdicao = (m) => {
-    // Campos exibidos no modal em "local" para o usuário editar
-    const toLocalInput = (s) => (s ? s.replace("T", " ").slice(0,16) : "");
+    // aqui a gente exibe sem deslocar o fuso
+    const toInput = (s) => {
+      if (!s) return "";
+      const raw = String(s).replace("T", " ");
+      // se vier ISO com Z, converte para local e monta datetime-local
+      if (/[zZ]|[+\-]\d{2}:?\d{2}$/.test(String(s))) {
+        const d = new Date(s);
+        const pad = (n) => String(n).padStart(2, "0");
+        const val = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+        return val;
+      }
+      return raw.replace(" ", "T").slice(0, 16);
+    };
+
     setEdit({
       id: m.id,
       titulo: m.titulo || "",
-      data_inicio: toLocalInput(m.data_inicio),
-      data_fim:     toLocalInput(m.data_fim),
+      data_inicio: toInput(m.data_inicio),
+      data_fim: toInput(m.data_fim),
       intervalo_minutos: Number(m.intervalo_minutos ?? m.intervalo_minuto ?? 15)
     });
   };
@@ -258,9 +274,8 @@ export default function Midia() {
       setErr(""); setMsg("");
       const body = {
         titulo: edit.titulo,
-        // >>> Converter para UTC antes de enviar (mesmo raciocínio do upload)
-        data_inicio: toMySQLUTC(edit.data_inicio?.replace(" ", "T")),
-        data_fim:     toMySQLUTC(edit.data_fim?.replace(" ", "T")),
+        data_inicio: toMySQLLocal(edit.data_inicio),
+        data_fim:     toMySQLLocal(edit.data_fim),
         intervalo_minutos: toInt(edit.intervalo_minutos, 15),
       };
       await apiAuth(`/api/midia/${edit.id}`, {
@@ -342,7 +357,7 @@ export default function Midia() {
             />
           </div>
 
-          {/* Tempo na tela só faz sentido para IMAGENS */}
+          {/* Tempo na tela só para IMAGENS */}
           {!isVideoSel && (
             <div className="grid-2">
               <div className="field">
@@ -405,9 +420,9 @@ export default function Midia() {
                 </div>
                 {(m.data_inicio || m.data_fim) && (
                   <div className="muted meta">
-                    {m.data_inicio ? `Início: ${new Date(m.data_inicio).toLocaleString()}` : ""}
+                    {m.data_inicio ? `Início: ${fmtLocal(m.data_inicio)}` : ""}
                     {m.data_inicio && m.data_fim ? " · " : ""}
-                    {m.data_fim ? `Término: ${new Date(m.data_fim).toLocaleString()}` : ""}
+                    {m.data_fim ? `Término: ${fmtLocal(m.data_fim)}` : ""}
                   </div>
                 )}
                 <div className="preview">
@@ -446,7 +461,7 @@ export default function Midia() {
                 <label>Início</label>
                 <input
                   type="datetime-local"
-                  value={edit.data_inicio?.replace(" ", "T")}
+                  value={edit.data_inicio}
                   onChange={(e) => setEdit({ ...edit, data_inicio: e.target.value })}
                 />
               </div>
@@ -454,7 +469,7 @@ export default function Midia() {
                 <label>Término</label>
                 <input
                   type="datetime-local"
-                  value={edit.data_fim?.replace(" ", "T")}
+                  value={edit.data_fim}
                   onChange={(e) => setEdit({ ...edit, data_fim: e.target.value })}
                 />
               </div>
