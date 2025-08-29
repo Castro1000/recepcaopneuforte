@@ -8,10 +8,7 @@ import { io } from 'socket.io-client';
 const API_BASE = 'https://recepcaopneuforte.onrender.com';
 // const API_BASE = 'http://localhost:3001';
 
-// Forçar som do vídeo quando permitido pelo navegador/dispositivo:
 const VIDEO_AUDIO_ENABLED = true;
-
-// Socket
 const socket = io(API_BASE, { transports: ['websocket', 'polling'], reconnection: true });
 
 export default function Painel() {
@@ -27,8 +24,8 @@ export default function Painel() {
   const [carroFinalizado, setCarroFinalizado] = useState(null);
   const [emDestaque, setEmDestaque] = useState(false);
 
-  // Liberação de áudio: começa TRUE para não exigir clique de desbloqueio
-  const [audioOK/*, setAudioOK*/] = useState(true);
+  // áudio já liberado (sem overlay de permissão)
+  const [audioOK] = useState(true);
 
   const intervaloRef = useRef(null);
   const timeoutDestaqueRef = useRef(null);
@@ -37,7 +34,7 @@ export default function Painel() {
   const [playlist, setPlaylist] = useState([]);
   const [overlayOn, setOverlayOn] = useState(false);
   const [overlayIdx, setOverlayIdx] = useState(0);
-  const [windowSec/*, setWindowSec*/] = useState(240);
+  const [windowSec] = useState(240);
   const videoRef = useRef(null);
   const imgTimerRef = useRef(null);
 
@@ -67,35 +64,54 @@ export default function Painel() {
     }
   };
 
-  // ------- Helpers de fetch JSON -------
+  // ------- fetch JSON -------
   const fetchJson = async (path) => {
     const r = await fetch(`${API_BASE}${path}`, { cache: 'no-store', headers: getAuthHeaders() });
     if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
     return r.json();
   };
 
-  // ------- Normalização de mídia/playlist -------
-  const normalize = (arr) => {
-    return (arr || []).map((m) => {
-      const tipoRaw = String(m.tipo || '').toUpperCase();
-      return {
-        id: m.id,
-        url: m.url,
-        src: m.src,
-        tipo: tipoRaw,                       // "IMG" | "VIDEO"/"VID"
-        titulo: m.titulo || '',
-        data_inicio: m.data_inicio || null,
-        data_fim: m.data_fim || null,
-        intervalo_minutos: m.intervalo_minutos ?? m.intervalo_minuto ?? 0,
-        image_duration_ms:
-          m.image_duration_ms ??
-          m.duracao_ms ??
-          (m.duracao_seg ? Number(m.duracao_seg) * 1000 : undefined),
-        ord: Number(m.ord ?? 0),
-        ativo: m.ativo == null ? 1 : Number(m.ativo),
-      };
-    });
+  // ====== UTIL: parse de data do servidor ======
+  // Regra: se vier "sem timezone" (YYYY-MM-DD HH:mm[:ss]), é UTC "ingênuo" => converto p/ local
+  //        se vier com 'Z' ou offset, deixo o JS converter.
+  const parseServerDateToMsLocal = (s) => {
+    if (s == null || s === '') return null;
+    const str = String(s).trim();
+
+    // "YYYY-MM-DD HH:mm[:ss]" ou "YYYY-MM-DDTHH:mm[:ss]" (sem Z/offset)
+    let m = str.match(
+      /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/
+    );
+    if (m && !/[zZ]|[+\-]\d{2}:?\d{2}$/.test(str)) {
+      const [, y, M, d, h, mi, sec = '00'] = m;
+      // trata como UTC
+      const msUtc = Date.UTC(+y, +M - 1, +d, +h, +mi, +sec);
+      return msUtc; // epoch ms sempre é UTC, então comparar com Date.now() é OK
+    }
+
+    // Tem 'Z' ou offset -> deixar o JS converter
+    const t = Date.parse(str);
+    return Number.isFinite(t) ? t : null;
   };
+
+  // ------- Normalização de mídia/playlist -------
+  const normalize = (arr) =>
+    (arr || []).map((m) => ({
+      id: m.id,
+      url: m.url,
+      src: m.src,
+      tipo: String(m.tipo || '').toUpperCase(), // IMG | VIDEO
+      titulo: m.titulo || '',
+      data_inicio: m.data_inicio || null,
+      data_fim: m.data_fim || null,
+      intervalo_minutos: m.intervalo_minutos ?? m.intervalo_minuto ?? 0,
+      image_duration_ms:
+        m.image_duration_ms ??
+        m.duracao_ms ??
+        (m.duracao_seg ? Number(m.duracao_seg) * 1000 : undefined),
+      ord: Number(m.ord ?? 0),
+      ativo: m.ativo == null ? 1 : Number(m.ativo),
+    }));
 
   // ------- Buscar playlist (com fallback para /api/midia) -------
   const fetchPlaylist = async () => {
@@ -147,41 +163,11 @@ export default function Painel() {
   }, [fila, carroFinalizado]);
 
   // ================== Agendamento / Overlay ==================
-
-  // >>> Parser de datas CORRIGIDO <<<
-  // - Se tiver Z/±HH:MM: usa Date.parse (respeita timezone)
-  // - Se vier sem timezone (AAAA-MM-DD HH:mm[:ss] ou ...THH:mm[:ss]): trata como LOCAL
-  const parseMaybe = (s) => {
-    if (s == null || s === '') return null;
-    if (typeof s === 'number') return s;
-    const str = String(s).trim();
-
-    // com timezone explícito
-    if (/[zZ]|[+\-]\d{2}:?\d{2}$/.test(str)) {
-      const t = Date.parse(str);
-      return Number.isFinite(t) ? t : null;
-    }
-
-    // YYYY-MM-DD HH:mm[:ss] ou YYYY-MM-DDTHH:mm[:ss] -> LOCAL
-    let m = str.match(
-      /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/
-    );
-    if (m) {
-      const [, y, M, d, h, mi, sec = '00'] = m;
-      const t = new Date(+y, +M - 1, +d, +h, +mi, +sec).getTime();
-      return Number.isFinite(t) ? t : null;
-    }
-
-    // fallback
-    const t = Date.parse(str);
-    return Number.isFinite(t) ? t : null;
-  };
-
-  const inDateWindow = (item, t) => {
-    const ini = parseMaybe(item.data_inicio);
-    const fim = parseMaybe(item.data_fim);
-    if (ini && t < ini) return false;
-    if (fim && t > fim) return false;
+  const inDateWindow = (item, now) => {
+    const ini = parseServerDateToMsLocal(item.data_inicio);
+    const fim = parseServerDateToMsLocal(item.data_fim);
+    if (ini && now < ini) return false;
+    if (fim && now > fim) return false;
     return true;
   };
 
@@ -195,7 +181,7 @@ export default function Painel() {
 
   const ivMs = (it) => Math.max(0, Number(it.intervalo_minutos || 0) * 60000);
   const anchorMs = (it) => {
-    const ini = parseMaybe(it.data_inicio);
+    const ini = parseServerDateToMsLocal(it.data_inicio);
     return Number.isFinite(ini) ? ini : 0;
   };
   const blockStart = (it, t) => {
@@ -204,14 +190,12 @@ export default function Painel() {
     const base = anchorMs(it);
     return Math.floor((t - base) / iv) * iv + base;
   };
-
   const inIntervalWindow = (it, t, wndSec) => {
     const iv = ivMs(it);
     if (iv <= 0) return true;
     const bs = blockStart(it, t);
     return t >= bs && (t - bs) < wndSec * 1000;
   };
-
   const mustOpenOverlayNow = (t) =>
     visibleNow(t).some((it) => inIntervalWindow(it, t, windowSec));
 
@@ -224,7 +208,6 @@ export default function Painel() {
         if (overlayOn) stopOverlay(false);
         return;
       }
-
       if (mustOpenOverlayNow(t)) {
         if (!overlayOn) startOverlay(t);
       } else {
@@ -271,11 +254,10 @@ export default function Painel() {
   const mediaBase = (it) => it.src || `${API_BASE}${it.url}`;
   const withCacheBuster = (base) => base + (base.includes('?') ? '&' : '?') + '_=' + Date.now();
 
-  // ============ PLAY de VÍDEO ============
+  // ============ PLAY de VÍDEO seguro ============
   const startVideoWithSafeAutoplay = (videoEl, url) => {
     if (!videoEl) return;
 
-    // atributos seguros
     videoEl.setAttribute('muted', '');
     videoEl.muted = true;
     videoEl.playsInline = true;
@@ -342,11 +324,7 @@ export default function Painel() {
 
     const safePlay = async (tryUnmutedFirst = true) => {
       try {
-        if (tryUnmutedFirst) {
-          videoEl.muted = !VIDEO_AUDIO_ENABLED;
-        } else {
-          videoEl.muted = true;
-        }
+        videoEl.muted = tryUnmutedFirst ? !VIDEO_AUDIO_ENABLED : true;
         try { if (videoEl.currentTime === 0) videoEl.currentTime = 0.001; } catch {}
         await videoEl.play();
         tryUnmuteIfAllowed();
@@ -379,7 +357,7 @@ export default function Painel() {
       if (videoEl.paused || videoEl.readyState < 2) stopOverlay(true);
     }, 8000);
   };
-  // ======================================
+  // ========================================================================
 
   // toca item atual
   useEffect(() => {
@@ -454,15 +432,12 @@ export default function Painel() {
   const carroDestaque = carroFinalizado || fila[carroAtual];
   const overlayItems = useMemo(() => visibleNow(nowMS()), [playlist]);
 
-  // item atual do overlay + src cache-busted
   const currentOverlayItem =
     overlayOn && overlayItems.length > 0
       ? overlayItems[overlayIdx % overlayItems.length]
       : null;
 
-  const currentImgSrc = currentOverlayItem && !isVideoKind(currentOverlayItem)
-    ? withCacheBuster(mediaBase(currentOverlayItem))
-    : null;
+  const isVideo = currentOverlayItem && isVideoKind(currentOverlayItem);
 
   return (
     <div className="painel">
@@ -542,13 +517,13 @@ export default function Painel() {
       {/* OVERLAY DE MÍDIA */}
       {overlayOn && currentOverlayItem && (
         <div className="media-overlay">
-          {isVideoKind(currentOverlayItem) ? (
+          {isVideo ? (
             <video ref={videoRef} className="media-el" muted playsInline autoPlay />
           ) : (
             <img
               className="media-el"
               alt={currentOverlayItem.titulo || 'mídia'}
-              src={currentImgSrc || ''}
+              src={mediaBase(currentOverlayItem)}
             />
           )}
         </div>

@@ -9,7 +9,7 @@ const API_BASE = "https://recepcaopneuforte.onrender.com";
 const DEFAULT_DURATION_MS = 8000;   // imagens
 const DEFAULT_SEQ_STEP_MS = 10000;  // imagens
 
-// utils
+// ===== Helpers =====
 const toInt = (v, d) => {
   const n = Number(v);
   return Number.isFinite(n) && n >= 0 ? Math.floor(n) : d;
@@ -29,23 +29,41 @@ const msToHuman = (ms) => {
   return rs ? `${m}m ${rs}s` : `${m}m`;
 };
 
-// datetime-local "YYYY-MM-DDTHH:mm" -> "YYYY-MM-DD HH:mm:00" (sem timezone)
-const toMySQLLocal = (val) => {
+// Converte "2025-08-29T14:36" (local) -> string UTC "YYYY-MM-DD HH:MM:SS"
+const localInputToMySQLUTC = (val) => {
   if (!val) return "";
-  const [d, t] = String(val).split("T");
-  return `${d} ${t}:00`;
+  const d = new Date(val); // interpreta como horário local do usuário
+  const iso = new Date(d.getTime() - d.getTimezoneOffset() * 60000)
+    .toISOString()
+    .slice(0, 19) // YYYY-MM-DDTHH:mm:ss
+    .replace("T", " ");
+  return iso;
 };
 
-// >>> Formatador para EXIBIR datas na tela sem deslocar fuso <<<
-// - Se a string tiver Z/±HH:MM -> formata para horário LOCAL.
-// - Senão, devolve a própria string (ou troca 'T' por ' ') por ser LOCAL.
-const fmtLocal = (value) => {
-  if (!value) return "";
-  const s = String(value);
-  if (/[zZ]|[+\-]\d{2}:?\d{2}$/.test(s)) {
-    try { return new Date(s).toLocaleString(); } catch { return s; }
+// Interpreta string vinda do servidor:
+//  - se for "YYYY-MM-DD HH:mm[:ss]" (naive), trata como UTC e devolve Date local
+//  - se vier com Z/offset, deixa o JS converter
+const serverStringToLocalDate = (s) => {
+  if (!s) return null;
+  const str = String(s).trim();
+  const m = str.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/);
+  if (m && !/[zZ]|[+\-]\d{2}:?\d{2}$/.test(str)) {
+    const [, y, M, d, h, mi, sec = "00"] = m;
+    const msUtc = Date.UTC(+y, +M - 1, +d, +h, +mi, +sec);
+    return new Date(msUtc); // objeto Date na hora local
   }
-  return s.replace("T", " ");
+  const t = Date.parse(str);
+  return Number.isFinite(t) ? new Date(t) : null;
+};
+
+// Para preencher <input type="datetime-local">
+const toInputValueFromServer = (s) => {
+  const d = serverStringToLocalDate(s);
+  if (!d || isNaN(d)) return "";
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(
+    d.getHours()
+  )}:${pad(d.getMinutes())}`;
 };
 
 export default function Midia() {
@@ -57,7 +75,6 @@ export default function Midia() {
 
   const token = (localStorage.getItem("token") || "").trim();
 
-  // --- helper de URL ---
   const makeUrl = (pathOrFull) => {
     if (!pathOrFull) return "";
     if (/^(https?:)?\/\//i.test(pathOrFull) || pathOrFull.startsWith("blob:") || pathOrFull.startsWith("data:")) {
@@ -66,7 +83,6 @@ export default function Midia() {
     return `${API_BASE}${pathOrFull}`;
   };
 
-  // --- fetch com auth ---
   async function apiAuth(path, opt = {}) {
     const headers = opt.headers ? { ...opt.headers } : {};
     if (opt.body && !(opt.body instanceof FormData)) headers["Content-Type"] = "application/json";
@@ -97,7 +113,6 @@ export default function Midia() {
   const [err, setErr] = useState("");
   const [isSaving, setIsSaving] = useState(false);
 
-  // input de arquivo (para reset real)
   const fileInputRef = useRef(null);
   const [fileInputKey, setFileInputKey] = useState(0);
 
@@ -107,13 +122,13 @@ export default function Midia() {
     data_inicio: "",
     data_fim: "",
     intervalo_minutos: 15,
-    durationValue: 8,      // imagens
+    durationValue: 8,      // images
     durationUnit: "s",
-    seq_step_sec: 10,      // imagens (multi)
+    seq_step_sec: 10,      // images (multi)
   });
 
   // edição
-  const [edit, setEdit] = useState(null); // {id, titulo, data_inicio, data_fim, intervalo_minutos}
+  const [edit, setEdit] = useState(null);
 
   // --- carregar lista ---
   const carregarMidias = async () => {
@@ -139,7 +154,7 @@ export default function Midia() {
     const list = Array.from(e.target.files || []);
     if (!list.length) return setForm((f) => ({ ...f, files: [] }));
     const firstVideo = list.find((f) => f.type.startsWith("video/"));
-    if (firstVideo) return setForm((f) => ({ ...f, files: [firstVideo] })); // só 1 vídeo
+    if (firstVideo) return setForm((f) => ({ ...f, files: [firstVideo] })); // apenas 1 vídeo
     const imgs = list.filter((f) => f.type.startsWith("image/"));
     setForm((f) => ({ ...f, files: imgs }));
   };
@@ -181,9 +196,11 @@ export default function Midia() {
         const fd = new FormData();
         fd.append("titulo", form.titulo || "");
         fd.append("arquivo", file);
-        // datas como LOCAL (sem timezone)
-        fd.append("data_inicio", toMySQLLocal(form.data_inicio));
-        fd.append("data_fim",     toMySQLLocal(form.data_fim));
+
+        // Enviar **em UTC** no formato do MySQL (sem Z) para bater com o servidor/DB (UTC).
+        fd.append("data_inicio", localInputToMySQLUTC(form.data_inicio));
+        fd.append("data_fim",     localInputToMySQLUTC(form.data_fim));
+
         fd.append("intervalo_minutos", String(intervaloMin));
 
         if (!isVideo) {
@@ -199,7 +216,7 @@ export default function Midia() {
       }
 
       setMsg(
-        isVideo
+        form.files[0].type.startsWith("video/")
           ? "Vídeo enviado com sucesso."
           : okCount > 1
             ? `Imagens enviadas: ${okCount}.`
@@ -244,28 +261,14 @@ export default function Midia() {
     }
   };
 
-  // --- editar ---
+  // --- editar (PATCH) ---
   const abrirEdicao = (m) => {
-    // aqui a gente exibe sem deslocar o fuso
-    const toInput = (s) => {
-      if (!s) return "";
-      const raw = String(s).replace("T", " ");
-      // se vier ISO com Z, converte para local e monta datetime-local
-      if (/[zZ]|[+\-]\d{2}:?\d{2}$/.test(String(s))) {
-        const d = new Date(s);
-        const pad = (n) => String(n).padStart(2, "0");
-        const val = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-        return val;
-      }
-      return raw.replace(" ", "T").slice(0, 16);
-    };
-
     setEdit({
       id: m.id,
       titulo: m.titulo || "",
-      data_inicio: toInput(m.data_inicio),
-      data_fim: toInput(m.data_fim),
-      intervalo_minutos: Number(m.intervalo_minutos ?? m.intervalo_minuto ?? 15)
+      data_inicio: toInputValueFromServer(m.data_inicio),
+      data_fim: toInputValueFromServer(m.data_fim),
+      intervalo_minutos: Number(m.intervalo_minutos ?? m.intervalo_minuto ?? 15),
     });
   };
 
@@ -274,8 +277,8 @@ export default function Midia() {
       setErr(""); setMsg("");
       const body = {
         titulo: edit.titulo,
-        data_inicio: toMySQLLocal(edit.data_inicio),
-        data_fim:     toMySQLLocal(edit.data_fim),
+        data_inicio: localInputToMySQLUTC(edit.data_inicio),
+        data_fim:     localInputToMySQLUTC(edit.data_fim),
         intervalo_minutos: toInt(edit.intervalo_minutos, 15),
       };
       await apiAuth(`/api/midia/${edit.id}`, {
@@ -357,7 +360,7 @@ export default function Midia() {
             />
           </div>
 
-          {/* Tempo na tela só para IMAGENS */}
+          {/* Tempo na tela apenas para IMAGENS */}
           {!isVideoSel && (
             <div className="grid-2">
               <div className="field">
@@ -406,40 +409,44 @@ export default function Midia() {
       {/* LISTA */}
       <h3>Mídias Cadastradas</h3>
       <ul className="midia-lista">
-        {midias.map((m) => (
-          <li key={m.id}>
-            <div className="item-grid">
-              <div>
-                <strong>{m.titulo || "(sem título)"}</strong>
-                <div className="muted meta">
-                  {(m.tipo === "IMG" ? "Imagem" : "Vídeo")}
-                  {m.tipo === "IMG"
-                    ? ` · fica ${msToHuman(Number(m.image_duration_ms) || DEFAULT_DURATION_MS)} na tela`
-                    : ` · duração do próprio vídeo`}
-                  {m.intervalo_minutos != null ? ` · Intervalo: ${m.intervalo_minutos} min` : ""}
-                </div>
-                {(m.data_inicio || m.data_fim) && (
+        {midias.map((m) => {
+          const dIni = serverStringToLocalDate(m.data_inicio);
+          const dFim = serverStringToLocalDate(m.data_fim);
+          return (
+            <li key={m.id}>
+              <div className="item-grid">
+                <div>
+                  <strong>{m.titulo || "(sem título)"}</strong>
                   <div className="muted meta">
-                    {m.data_inicio ? `Início: ${fmtLocal(m.data_inicio)}` : ""}
-                    {m.data_inicio && m.data_fim ? " · " : ""}
-                    {m.data_fim ? `Término: ${fmtLocal(m.data_fim)}` : ""}
+                    {(m.tipo === "IMG" ? "Imagem" : "Vídeo")}
+                    {m.tipo === "IMG"
+                      ? ` · fica ${msToHuman(Number(m.image_duration_ms) || DEFAULT_DURATION_MS)} na tela`
+                      : ` · duração do próprio vídeo`}
+                    {m.intervalo_minutos != null ? ` · Intervalo: ${m.intervalo_minutos} min` : ""}
                   </div>
-                )}
-                <div className="preview">
-                  {m.tipo === "IMG" ? (
-                    <img src={resolveUrl(m.url)} alt={m.titulo || "img"} />
-                  ) : (
-                    <video src={resolveUrl(m.url)} muted controls />
+                  {(m.data_inicio || m.data_fim) && (
+                    <div className="muted meta">
+                      {dIni ? `Início: ${dIni.toLocaleString()}` : ""}
+                      {dIni && dFim ? " · " : ""}
+                      {dFim ? `Término: ${dFim.toLocaleString()}` : ""}
+                    </div>
                   )}
+                  <div className="preview">
+                    {m.tipo === "IMG" ? (
+                      <img src={resolveUrl(m.url)} alt={m.titulo || "img"} />
+                    ) : (
+                      <video src={resolveUrl(m.url)} muted controls />
+                    )}
+                  </div>
+                </div>
+                <div className="right-actions">
+                  <button className="btn" onClick={() => abrirEdicao(m)}>Editar</button>
+                  <button className="btn danger" onClick={() => excluir(m.id)}>Excluir</button>
                 </div>
               </div>
-              <div className="right-actions">
-                <button className="btn" onClick={() => abrirEdicao(m)}>Editar</button>
-                <button className="btn danger" onClick={() => excluir(m.id)}>Excluir</button>
-              </div>
-            </div>
-          </li>
-        ))}
+            </li>
+          );
+        })}
         {!midias.length && <li className="muted empty">Sem itens</li>}
       </ul>
 
