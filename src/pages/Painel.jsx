@@ -8,14 +8,10 @@ import { io } from 'socket.io-client';
 const API_BASE = 'https://recepcaopneuforte.onrender.com';
 // const API_BASE = 'http://localhost:3001';
 
-// Forçar som do vídeo quando permitido pelo navegador/dispositivo:
 const VIDEO_AUDIO_ENABLED = true;
-
-// Socket
 const socket = io(API_BASE, { transports: ['websocket', 'polling'], reconnection: true });
 
 export default function Painel() {
-  // grava ?token=... no localStorage (facilita no Render)
   useEffect(() => {
     const t = new URLSearchParams(window.location.search).get('token');
     if (t) localStorage.setItem('token', t);
@@ -27,25 +23,20 @@ export default function Painel() {
   const [carroFinalizado, setCarroFinalizado] = useState(null);
   const [emDestaque, setEmDestaque] = useState(false);
 
-  // Liberação de áudio: começa TRUE para não exigir clique de desbloqueio
-  const [audioOK/*, setAudioOK*/] = useState(true);
-
-  const intervaloRef = useRef(null);
-  const timeoutDestaqueRef = useRef(null);
-
   // -------- Playlist / overlay --------
   const [playlist, setPlaylist] = useState([]);
   const [overlayOn, setOverlayOn] = useState(false);
   const [overlayIdx, setOverlayIdx] = useState(0);
-  const [windowSec/*, setWindowSec*/] = useState(240);
+  const [windowSec] = useState(240); // janela de “disparo” do overlay
   const videoRef = useRef(null);
   const imgTimerRef = useRef(null);
 
-  // suprimir reabertura no mesmo bloco
   const suppressUntilRef = useRef(0);
   const overlayBlockEndRef = useRef(0);
 
-  // Token dinâmico sempre que precisar (evita 403 por header “congelado”)
+  const intervaloRef = useRef(null);
+  const timeoutDestaqueRef = useRef(null);
+
   const getToken = () => (localStorage.getItem('token') || '').trim();
   const getAuthHeaders = () => {
     const tk = getToken();
@@ -82,11 +73,10 @@ export default function Painel() {
         id: m.id,
         url: m.url,
         src: m.src,
-        tipo: tipoRaw,                       // "IMG" | "VIDEO"/"VID"
+        tipo: tipoRaw, // "IMG" | "VIDEO"/"VID"
         titulo: m.titulo || '',
         data_inicio: m.data_inicio || null,
         data_fim: m.data_fim || null,
-        // aceita singular/plural vindo do backend
         intervalo_minutos: m.intervalo_minutos ?? m.intervalo_minuto ?? 0,
         image_duration_ms:
           m.image_duration_ms ??
@@ -98,22 +88,20 @@ export default function Painel() {
     });
   };
 
-  // ------- Buscar playlist (com fallback para /api/midia) -------
+  // ------- Buscar playlist -------
   const fetchPlaylist = async () => {
     try {
       let items = [];
       try {
-        const j = await fetchJson('/api/playlist'); // pode exigir token
+        const j = await fetchJson('/api/playlist');
         items = Array.isArray(j) ? j : Array.isArray(j?.items) ? j.items : [];
       } catch (e) {
         console.warn('playlist falhou:', e?.message || e);
       }
-
       if (!Array.isArray(items) || items.length === 0) {
-        const j2 = await fetchJson('/api/midia');   // fallback autenticado
+        const j2 = await fetchJson('/api/midia');
         items = Array.isArray(j2) ? j2 : [];
       }
-
       setPlaylist(normalize(items));
     } catch (e) {
       console.warn('Falha ao buscar playlist:', e);
@@ -148,26 +136,32 @@ export default function Painel() {
   }, [fila, carroFinalizado]);
 
   // ================== Agendamento / Overlay ==================
-
-  // Parser de datas: ignora timezone e trata tudo como LOCAL
+  // Parser robusto: assume LOCAL em todos os formatos comuns (MySQL/ISO)
   const parseMaybe = (s) => {
     if (s == null || s === '') return null;
     const str = String(s).trim();
 
-    // "YYYY-MM-DD HH:mm[:ss]" ou "YYYY-MM-DDTHH:mm[:ss]"
-    let m = str.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/);
+    // 1) YYYY-MM-DD HH:mm[:ss]
+    let m = str.match(
+      /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/
+    );
     if (m) {
       const [, y, M, d, h, mi, sec='00'] = m;
       const t = new Date(+y, +M - 1, +d, +h, +mi, +sec).getTime();
       return Number.isFinite(t) ? t : null;
     }
-    // ISO com Z/offset → ignora offset e interpreta como LOCAL
-    m = str.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?.*(Z|[+\-]\d{2}:?\d{2})$/);
+
+    // 2) ISO com milissegundos e/ou Z/offset: ignoramos o offset e usamos LOCAL
+    m = str.match(
+      /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?(?:Z|[+\-]\d{2}:?\d{2})$/
+    );
     if (m) {
       const [, y, M, d, h, mi, sec='00'] = m;
       const t = new Date(+y, +M - 1, +d, +h, +mi, +sec).getTime();
       return Number.isFinite(t) ? t : null;
     }
+
+    // 3) Fallback: Date.parse (pode variar entre navegadores)
     const t = Date.parse(str);
     return Number.isFinite(t) ? t : null;
   };
@@ -175,9 +169,9 @@ export default function Painel() {
   const inDateWindow = (item, t) => {
     const ini = parseMaybe(item.data_inicio);
     const fim = parseMaybe(item.data_fim);
-    if (ini && t < ini) return false;
-    if (fim && t > fim) return false;
-    return true;
+    if (ini && t < ini) return false;  // antes do início
+    if (fim && t > fim) return false;  // depois do final
+    return true;                       // dentro (ou sem limites)
   };
 
   const isActive = (x) => (x?.ativo == null ? 1 : Number(x.ativo)) === 1;
@@ -200,11 +194,13 @@ export default function Painel() {
     return Math.floor((t - base) / iv) * iv + base;
   };
 
+  // janela de disparo: abrimos se delta < min(janela, intervalo) (torna robusto p/ intervalo curto)
   const inIntervalWindow = (it, t, wndSec) => {
     const iv = ivMs(it);
     if (iv <= 0) return true;
     const bs = blockStart(it, t);
-    return t >= bs && (t - bs) < wndSec * 1000;
+    const delta = t - bs;
+    return delta >= 0 && delta < Math.min(iv, wndSec * 1000);
   };
 
   const mustOpenOverlayNow = (t) =>
@@ -266,7 +262,7 @@ export default function Painel() {
   const mediaBase = (it) => it.src || `${API_BASE}${it.url}`;
   const withCacheBuster = (base) => base + (base.includes('?') ? '&' : '?') + '_=' + Date.now();
 
-  // ============ PLAY de VÍDEO: anti-tela-preta + unmuted-first + retries ============
+  // ============ PLAY de VÍDEO ============
   const startVideoWithSafeAutoplay = (videoEl, url) => {
     if (!videoEl) return;
 
@@ -284,12 +280,8 @@ export default function Painel() {
     const src = withCacheBuster(url);
 
     // limpa handlers anteriores e estado
-    videoEl.onended = null;
-    videoEl.onerror = null;
-    videoEl.onloadeddata = null;
-    videoEl.onloadedmetadata = null;
-    videoEl.oncanplay = null;
-    videoEl.onplaying = null;
+    videoEl.onended = videoEl.onerror = videoEl.onloadeddata =
+    videoEl.onloadedmetadata = videoEl.oncanplay = videoEl.onplaying =
     videoEl.onstalled = null;
 
     try { videoEl.pause(); } catch {}
@@ -303,20 +295,10 @@ export default function Painel() {
     let retriedOnce = false;
 
     const tryUnmuteIfAllowed = () => {
-      if (VIDEO_AUDIO_ENABLED && audioOK) {
+      if (VIDEO_AUDIO_ENABLED) {
         [0, 120, 600, 2000].forEach((ms) => {
           setTimeout(() => { try { videoEl.muted = false; videoEl.volume = 1; } catch {} }, ms);
         });
-      }
-    };
-
-    const confirmFirstFrameOrRetry = () => {
-      if ('requestVideoFrameCallback' in videoEl) {
-        try {
-          videoEl.requestVideoFrameCallback((_now, meta) => {
-            if (!meta || meta.presentedFrames === 0) retryWithNewSrc();
-          });
-        } catch {}
       }
     };
 
@@ -326,7 +308,6 @@ export default function Painel() {
       try { videoEl.pause(); } catch {}
       try { videoEl.removeAttribute('src'); } catch {}
       try { videoEl.load(); } catch {}
-
       const src2 = withCacheBuster(url);
       videoEl.src = src2;
       try { videoEl.load(); } catch {}
@@ -336,14 +317,9 @@ export default function Painel() {
 
     const stopFail = () => { if (failTimer) { clearTimeout(failTimer); failTimer = null; } };
 
-    // tenta unmuted primeiro
     const safePlay = async (tryUnmutedFirst = true) => {
       try {
-        if (tryUnmutedFirst) {
-          videoEl.muted = !(VIDEO_AUDIO_ENABLED);
-        } else {
-          videoEl.muted = true;
-        }
+        videoEl.muted = tryUnmutedFirst ? !VIDEO_AUDIO_ENABLED : true;
         try { if (videoEl.currentTime === 0) videoEl.currentTime = 0.001; } catch {}
         await videoEl.play();
         tryUnmuteIfAllowed();
@@ -367,12 +343,11 @@ export default function Painel() {
     };
     videoEl.onloadeddata = () => { safePlay(true); };
     videoEl.oncanplay   = () => { if (videoEl.paused) safePlay(true); };
-    videoEl.onplaying   = () => { stopFail(); confirmFirstFrameOrRetry(); tryUnmuteIfAllowed(); };
+    videoEl.onplaying   = () => { stopFail(); tryUnmuteIfAllowed(); };
     videoEl.onstalled   = () => { retryWithNewSrc(); };
     videoEl.onended     = () => stopOverlay(true);
     videoEl.onerror     = () => stopOverlay(true);
 
-    // fail-safe: 8s sem “playing” → fecha overlay (evita ficar preto)
     failTimer = setTimeout(() => {
       if (videoEl.paused || videoEl.readyState < 2) stopOverlay(true);
     }, 8000);
@@ -452,7 +427,6 @@ export default function Painel() {
   const carroDestaque = carroFinalizado || fila[carroAtual];
   const overlayItems = useMemo(() => visibleNow(nowMS()), [playlist]);
 
-  // item atual do overlay + src cache-busted
   const currentOverlayItem =
     overlayOn && overlayItems.length > 0
       ? overlayItems[overlayIdx % overlayItems.length]
