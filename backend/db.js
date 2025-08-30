@@ -37,16 +37,14 @@ const pool = mysql.createPool({
 
   multipleStatements: false,
   charset: 'utf8mb4',
+  dateStrings: true, // devolve DATETIME como string "YYYY-MM-DD HH:MM:SS"
 
-  // Mantém DATETIME/TIMESTAMP como string, sem conversão automática de fuso
-  dateStrings: true,
-
-  ssl, // <<-- SSL ajustado acima
+  ssl,
 });
 
 const p = pool.promise();
 
-// >>> Única mudança: sessão no fuso de Manaus (UTC-04:00). Antes estava '+00:00'.
+// ⚠️ FIX: toda conexão passa a operar em Manaus (UTC−04:00)
 pool.on('connection', (conn) => {
   conn.query("SET time_zone = '-04:00'");
 });
@@ -59,12 +57,13 @@ p.query('SELECT 1')
   .then(() => console.log('✅ MySQL conectado (pool ativo)'))
   .catch((e) => console.error('❌ Falha ao conectar MySQL:', e.code || e.message));
 
+// keepalive
 setInterval(async () => {
   try { await p.query('SELECT 1'); }
   catch (e) { console.error('[mysql keepalive failed]', e.code || e.message); }
 }, 30000);
 
-// Wrapper compatível (callback ou promise)
+// Wrapper compatível
 function query(sql, params, cb) {
   if (typeof params === 'function') { cb = params; params = []; }
   if (typeof cb === 'function') {
