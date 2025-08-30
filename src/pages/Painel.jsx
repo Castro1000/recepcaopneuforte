@@ -63,9 +63,12 @@ export default function Painel() {
     }
   };
 
-  // ------- fetch JSON com token -------
-  const fetchJson = async (path) => {
-    const r = await fetch(`${API_BASE}${path}`, { cache: 'no-store', headers: getAuthHeaders() });
+  // ------- fetch JSON -------
+  const fetchJson = async (path, opts = {}) => {
+    const r = await fetch(`${API_BASE}${path}`, {
+      cache: 'no-store',
+      headers: { ...(opts.headers || {}), ...getAuthHeaders() },
+    });
     if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
     return r.json();
   };
@@ -91,19 +94,25 @@ export default function Painel() {
   // ------- Buscar playlist -------
   const fetchPlaylist = async () => {
     try {
+      // 1) pública
       let items = [];
       try {
-        const j = await fetchJson('/api/playlist'); // se existir
+        const j = await fetchJson('/api/playlist');
         items = Array.isArray(j) ? j : Array.isArray(j?.items) ? j.items : [];
-      } catch { /* ignora, usa /api/midia */ }
-
-      if (!Array.isArray(items) || items.length === 0) {
-        const j2 = await fetchJson('/api/midia');
-        items = Array.isArray(j2) ? j2 : [];
+      } catch (e) {
+        // se falhou, tenta fallback SOMENTE se tiver token
+        if (getToken()) {
+          const j2 = await fetchJson('/api/midia');
+          items = Array.isArray(j2) ? j2 : [];
+        } else {
+          // sem token: não tenta /api/midia para não gerar 403
+          items = [];
+        }
       }
+
       setPlaylist(normalize(items));
     } catch (e) {
-      console.warn('Falha ao buscar playlist:', e);
+      console.warn('Falha ao buscar playlist:', e?.message || e);
       setPlaylist([]);
     }
   };
@@ -133,20 +142,15 @@ export default function Painel() {
   }, [fila, carroFinalizado]);
 
   // ================== Agendamento / Overlay ==================
-
-  // Parser que trata SEMPRE como horário LOCAL (ignora timezone na string)
   const parseMaybe = (s) => {
     if (!s) return null;
     const str = String(s).trim();
-
-    // YYYY-MM-DD HH:mm[:ss]
     let m = str.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/);
     if (m) {
       const [, y, M, d, h, mi, sec = '00'] = m;
       const t = new Date(+y, +M - 1, +d, +h, +mi, +sec).getTime();
       return Number.isFinite(t) ? t : null;
     }
-    // ISO com Z ou offset -> interpretar como LOCAL (ignorar offset)
     m = str.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?.*(Z|[+\-]\d{2}:?\d{2})$/);
     if (m) {
       const [, y, M, d, h, mi, sec = '00'] = m;
@@ -249,42 +253,46 @@ export default function Painel() {
   const mediaBase = (it) => it.src || `${API_BASE}${it.url}`;
   const withCacheBuster = (base) => base + (base.includes('?') ? '&' : '?') + '_=' + Date.now();
 
-  // ===== Áudio (TTS) =====
+  // ================== Áudio (TTS) ==================
   const audioRef = useRef(null);
   const [audioUnlocked, setAudioUnlocked] = useState(false);
-  const pendingTTSRef = useRef(null); // guarda um texto para falar quando destravar
+  const pendingTTSRef = useRef(null);
 
   useEffect(() => {
     const a = new Audio();
     a.preload = 'auto';
     a.crossOrigin = 'anonymous';
+    a.playsInline = true;
     audioRef.current = a;
 
     const unlock = () => {
       if (!audioUnlocked) {
         try {
-          // “desmuta” e dá um play/pause rápido para liberar
           a.muted = false;
           a.volume = 1;
           a.play().catch(()=>{}); a.pause(); a.currentTime = 0;
         } catch {}
         setAudioUnlocked(true);
-
-        // se tinha TTS pendente, toca agora
-        const pend = pendingTTSRef.current;
-        if (pend) {
+        if (pendingTTSRef.current) {
+          const txt = pendingTTSRef.current;
           pendingTTSRef.current = null;
-          speak(pend);
+          speak(txt);
         }
       }
     };
 
-    // destrava no primeiro toque/tecla
+    // TV/teclado: Enter/Space/OK; mouse/touch
+    const onKey = (ev) => {
+      const k = (ev.code || ev.key || '').toLowerCase();
+      if (['enter','space','numpadenter','mediaplaypause','ok'].some(x => k.includes(x))) unlock();
+    };
     window.addEventListener('pointerdown', unlock, { once: true });
-    window.addEventListener('keydown', unlock, { once: true });
+    window.addEventListener('touchstart', unlock, { once: true });
+    window.addEventListener('keydown', onKey);
     return () => {
       window.removeEventListener('pointerdown', unlock);
-      window.removeEventListener('keydown', unlock);
+      window.removeEventListener('touchstart', unlock);
+      window.removeEventListener('keydown', onKey);
     };
   }, [audioUnlocked]);
 
@@ -293,11 +301,7 @@ export default function Painel() {
       const a = audioRef.current;
       if (!a) return;
 
-      // se ainda não destravou, guarda para tocar depois do primeiro toque
-      if (!audioUnlocked) {
-        pendingTTSRef.current = text;
-        return;
-      }
+      if (!audioUnlocked) { pendingTTSRef.current = text; return; }
 
       const url = `${API_BASE}/api/tts?text=${encodeURIComponent(text)}`;
 
@@ -305,7 +309,6 @@ export default function Painel() {
       a.src = url;
       a.currentTime = 0;
       await a.play().catch(() => {
-        // fallback com SpeechSynthesis se o servidor estiver off ou o play bloquear
         if ('speechSynthesis' in window) {
           const u = new SpeechSynthesisUtterance(text);
           u.lang = 'pt-BR';
@@ -313,7 +316,6 @@ export default function Painel() {
         }
       });
     } catch {
-      // último fallback de segurança
       if ('speechSynthesis' in window) {
         const u = new SpeechSynthesisUtterance(text);
         u.lang = 'pt-BR';
@@ -332,7 +334,7 @@ export default function Painel() {
     return txt;
   };
 
-  // ====== Vídeo: autoplay seguro + som quando permitido ======
+  // ====== Vídeo: autoplay seguro ======
   const startVideoWithSafeAutoplay = (videoEl, url) => {
     if (!videoEl) return;
 
@@ -468,8 +470,7 @@ export default function Painel() {
       setEmDestaque(true);
 
       // fala (TTS)
-      const msg = makeTTSMessage(carro);
-      speak(msg);
+      speak(makeTTSMessage(carro));
 
       setFila((prev) => {
         const nova = prev.filter((c) => c.id !== carro.id);
@@ -493,7 +494,7 @@ export default function Painel() {
       socket.off('novoCarroAdicionado', onNovoCarroAdicionado);
       if (timeoutDestaqueRef.current) clearTimeout(timeoutDestaqueRef.current);
     };
-  }, []); // speak é estável o suficiente aqui; ele usa refs/estado interno
+  }, []);
 
   useEffect(() => {
     if (!carroFinalizado && emDestaque) setEmDestaque(false);
@@ -596,15 +597,22 @@ export default function Painel() {
         </div>
       )}
 
-      {/* lembrete para destravar som */}
+      {/* botão central para destravar som */}
       {!audioUnlocked && (
-        <div style={{
-          position:'fixed', bottom:16, left:'50%', transform:'translateX(-50%)',
-          background:'rgba(0,0,0,.6)', color:'#fff', padding:'8px 12px',
-          borderRadius:8, fontSize:14
-        }}>
-          Toque em qualquer lugar para habilitar o som 🔊
-        </div>
+        <button
+          onClick={() => {
+            // dispara o desbloqueio via evento de clique
+            const ev = new Event('pointerdown');
+            window.dispatchEvent(ev);
+          }}
+          style={{
+            position:'fixed', inset:0, display:'flex', alignItems:'center', justifyContent:'center',
+            background:'rgba(0,0,0,.6)', border:'none', color:'#fff', fontSize:24,
+            cursor:'pointer'
+          }}
+        >
+          🔊 Ativar som (OK/Enter)
+        </button>
       )}
     </div>
   );
