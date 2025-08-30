@@ -38,48 +38,9 @@ export default function Painel() {
   const videoRef = useRef(null);
   const imgTimerRef = useRef(null);
 
-  // throttle de abertura de overlay (evita loops)
-  const lastOpenTryRef = useRef(0);
-
-  // ===== Áudio (TTS) =====
-  const audioRef = useRef(null);
-  const [audioUnlocked, setAudioUnlocked] = useState(false);
-
-  useEffect(() => {
-    const a = new Audio();
-    a.preload = 'auto';
-    a.crossOrigin = 'anonymous';
-    audioRef.current = a;
-
-    const unlock = () => {
-      if (!audioUnlocked) {
-        try { a.muted = false; a.volume = 1; a.play().catch(()=>{}); a.pause(); a.currentTime = 0; } catch {}
-        setAudioUnlocked(true);
-      }
-    };
-    window.addEventListener('pointerdown', unlock, { once: true });
-    window.addEventListener('keydown', unlock, { once: true });
-    return () => {
-      window.removeEventListener('pointerdown', unlock);
-      window.removeEventListener('keydown', unlock);
-    };
-  }, [audioUnlocked]);
-
-  const speak = async (text) => {
-    try {
-      const a = audioRef.current;
-      if (!a) return;
-      const url = `${API_BASE}/tts?text=${encodeURIComponent(text)}`;
-      a.pause();
-      a.src = url;
-      a.currentTime = 0;
-      await a.play().catch(()=>{ /* se bloqueado, tocará assim que o usuário interagir */ });
-    } catch {}
-  };
-
-  // impedir reabrir dentro do mesmo bloco (reduzido a throttle)
-  // const suppressUntilRef = useRef(0); // <- removemos o uso global
-  // const overlayBlockEndRef = useRef(0); // <- idem
+  // impedir reabrir dentro do mesmo bloco
+  const suppressUntilRef = useRef(0);
+  const overlayBlockEndRef = useRef(0);
 
   const getToken = () => (localStorage.getItem('token') || '').trim();
   const getAuthHeaders = () => {
@@ -149,13 +110,6 @@ export default function Painel() {
 
   // ------- Cargas iniciais -------
   useEffect(() => { buscarFila(); fetchPlaylist(); }, []);
-
-  // Atualiza playlist quando a aba volta a foco (recupera de long-run)
-  useEffect(() => {
-    const onVis = () => { if (!document.hidden) fetchPlaylist(); };
-    document.addEventListener('visibilitychange', onVis);
-    return () => document.removeEventListener('visibilitychange', onVis);
-  }, []);
 
   // ------- Atualizações periódicas -------
   useEffect(() => {
@@ -241,8 +195,8 @@ export default function Painel() {
   useEffect(() => {
     const tick = () => {
       const t = nowMS();
+      if (t < suppressUntilRef.current) return;
 
-      // se estiver destacando carro finalizado, não abre overlay
       if (carroFinalizado) {
         if (overlayOn) stopOverlay(false);
         return;
@@ -260,34 +214,123 @@ export default function Painel() {
   }, [playlist, carroFinalizado, windowSec, overlayOn]);
 
   const startOverlay = (tStart) => {
-    // throttle: não tentar reabrir mais que 1x/seg
-    const now = Date.now();
-    if (now - lastOpenTryRef.current < 1000) return;
-    lastOpenTryRef.current = now;
-
     const items = visibleNow(tStart);
     if (!items.length) return;
 
     setOverlayIdx(0);
     setOverlayOn(true);
 
-    // Removido o "suppressUntilRef" global para não travar novas janelas
-    // de itens diferentes/novos horários. Manteremos apenas o tempo de janela
-    // como referência visual (não necessário aqui).
+    const ref = items[0];
+    const iv = ivMs(ref);
+    if (iv > 0) {
+      const bs = blockStart(ref, tStart);
+      overlayBlockEndRef.current = bs + iv;
+    } else {
+      overlayBlockEndRef.current = tStart + windowSec * 1000;
+    }
   };
 
-  const stopOverlay = (_closeAndSuppress = true) => {
+  const stopOverlay = (closeAndSuppress = true) => {
     setOverlayOn(false);
     if (imgTimerRef.current) { clearTimeout(imgTimerRef.current); imgTimerRef.current = null; }
     try {
       const v = videoRef.current;
       if (v) { v.pause(); v.removeAttribute('src'); v.load(); }
     } catch {}
+    if (closeAndSuppress) {
+      suppressUntilRef.current = Math.max(
+        suppressUntilRef.current,
+        overlayBlockEndRef.current || 0
+      );
+    }
   };
 
   const isVideoKind = (x) => String(x?.tipo || '').toUpperCase().startsWith('VID');
   const mediaBase = (it) => it.src || `${API_BASE}${it.url}`;
   const withCacheBuster = (base) => base + (base.includes('?') ? '&' : '?') + '_=' + Date.now();
+
+  // ===== Áudio (TTS) =====
+  const audioRef = useRef(null);
+  const [audioUnlocked, setAudioUnlocked] = useState(false);
+  const pendingTTSRef = useRef(null); // guarda um texto para falar quando destravar
+
+  useEffect(() => {
+    const a = new Audio();
+    a.preload = 'auto';
+    a.crossOrigin = 'anonymous';
+    audioRef.current = a;
+
+    const unlock = () => {
+      if (!audioUnlocked) {
+        try {
+          // “desmuta” e dá um play/pause rápido para liberar
+          a.muted = false;
+          a.volume = 1;
+          a.play().catch(()=>{}); a.pause(); a.currentTime = 0;
+        } catch {}
+        setAudioUnlocked(true);
+
+        // se tinha TTS pendente, toca agora
+        const pend = pendingTTSRef.current;
+        if (pend) {
+          pendingTTSRef.current = null;
+          speak(pend);
+        }
+      }
+    };
+
+    // destrava no primeiro toque/tecla
+    window.addEventListener('pointerdown', unlock, { once: true });
+    window.addEventListener('keydown', unlock, { once: true });
+    return () => {
+      window.removeEventListener('pointerdown', unlock);
+      window.removeEventListener('keydown', unlock);
+    };
+  }, [audioUnlocked]);
+
+  const speak = async (text) => {
+    try {
+      const a = audioRef.current;
+      if (!a) return;
+
+      // se ainda não destravou, guarda para tocar depois do primeiro toque
+      if (!audioUnlocked) {
+        pendingTTSRef.current = text;
+        return;
+      }
+
+      const url = `${API_BASE}/api/tts?text=${encodeURIComponent(text)}`;
+
+      a.pause();
+      a.src = url;
+      a.currentTime = 0;
+      await a.play().catch(() => {
+        // fallback com SpeechSynthesis se o servidor estiver off ou o play bloquear
+        if ('speechSynthesis' in window) {
+          const u = new SpeechSynthesisUtterance(text);
+          u.lang = 'pt-BR';
+          window.speechSynthesis.speak(u);
+        }
+      });
+    } catch {
+      // último fallback de segurança
+      if ('speechSynthesis' in window) {
+        const u = new SpeechSynthesisUtterance(text);
+        u.lang = 'pt-BR';
+        window.speechSynthesis.speak(u);
+      }
+    }
+  };
+
+  const makeTTSMessage = (carro) => {
+    const modelo = carro?.modelo ? carro.modelo : '';
+    const placa = carro?.placa ? carro.placa : '';
+    const servicos = [carro?.servico, carro?.servico2, carro?.servico3].filter(Boolean).join(', ');
+    let txt = `Serviço finalizado, carro ${modelo}, placa ${placa}.`;
+    if (servicos) txt += ` Serviços: ${servicos}.`;
+    txt += ` Cliente, favor dirigir-se à recepção.`;
+    return txt;
+  };
 
   // ====== Vídeo: autoplay seguro + som quando permitido ======
   const startVideoWithSafeAutoplay = (videoEl, url) => {
@@ -324,7 +367,7 @@ export default function Painel() {
     let retriedOnce = false;
 
     const tryUnmuteIfAllowed = () => {
-      if (VIDEO_AUDIO_ENABLED) {
+      if (VIDEO_AUDIO_ENABLED && audioUnlocked) {
         [0, 120, 600, 2000].forEach((ms) => {
           setTimeout(() => { try { videoEl.muted = false; videoEl.volume = 1; } catch {} }, ms);
         });
@@ -424,10 +467,9 @@ export default function Painel() {
       setCarroFinalizado(carro);
       setEmDestaque(true);
 
-      // Fala (TTS)
-      const modelo = (carro?.modelo || '').toString();
-      const placa  = (carro?.placa  || '').toString();
-      speak(`Serviço finalizado. Carro ${modelo}. Placa ${placa}. Dirija-se ao caixa, por favor.`);
+      // fala (TTS)
+      const msg = makeTTSMessage(carro);
+      speak(msg);
 
       setFila((prev) => {
         const nova = prev.filter((c) => c.id !== carro.id);
@@ -451,7 +493,7 @@ export default function Painel() {
       socket.off('novoCarroAdicionado', onNovoCarroAdicionado);
       if (timeoutDestaqueRef.current) clearTimeout(timeoutDestaqueRef.current);
     };
-  }, []);
+  }, []); // speak é estável o suficiente aqui; ele usa refs/estado interno
 
   useEffect(() => {
     if (!carroFinalizado && emDestaque) setEmDestaque(false);
@@ -551,6 +593,17 @@ export default function Painel() {
           ) : (
             <img className="media-el" alt={currentOverlayItem.titulo || 'mídia'} src={currentImgSrc || ''} />
           )}
+        </div>
+      )}
+
+      {/* lembrete para destravar som */}
+      {!audioUnlocked && (
+        <div style={{
+          position:'fixed', bottom:16, left:'50%', transform:'translateX(-50%)',
+          background:'rgba(0,0,0,.6)', color:'#fff', padding:'8px 12px',
+          borderRadius:8, fontSize:14
+        }}>
+          Toque em qualquer lugar para habilitar o som 🔊
         </div>
       )}
     </div>
