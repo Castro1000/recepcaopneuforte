@@ -37,6 +37,14 @@ function decideRedirect(perfilNorm) {
   return '/balcao';
 }
 
+// Converte "YYYY-MM-DDTHH:mm" ou "YYYY-MM-DD HH:mm" -> "YYYY-MM-DD HH:mm:00"
+// (não aplica timezone, grava exatamente o que foi digitado)
+function toMySQLLocalNoTZ(v) {
+  if (!v) return null;
+  const s = String(v).trim().replace('T', ' ');
+  return /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(s) ? `${s}:00` : s.slice(0, 19);
+}
+
 /* =================================================================
    ====================== AUTENTICAÇÃO / ROLES =====================
    ================================================================= */
@@ -234,7 +242,7 @@ router.get('/tts', async (req, res) => {
 });
 
 /* =================================================================
-   ================= RELATÓRIOS / ESTATÍSTICAS ADMIN ===============
+   =============== RELATÓRIOS / ESTATÍSTICAS ADMIN =================
    ================================================================= */
 router.get('/relatorio-carros', (req, res) => {
   let { from, to, placa, status } = req.query;
@@ -322,64 +330,6 @@ router.get('/estatisticas-servicos', (req, res) => {
 });
 
 /* =================================================================
-   =========================== USUÁRIOS ============================
-   ================================================================= */
-
-// Lista usuários
-router.get('/usuarios', verifyAuth, requireAdmin, (_req, res) => {
-  db.query('SHOW COLUMNS FROM usuarios', (err, cols) => {
-    if (err) {
-      console.error('SHOW COLUMNS usuarios error:', err.sqlMessage || err.message);
-      return res.status(500).json({ error: 'db_error', detail: err.sqlMessage || String(err) });
-    }
-    const has = (name) => cols?.some(c => String(c.Field).toLowerCase() === String(name).toLowerCase());
-    const nameCol = has('nome') ? 'nome' : (has('name') ? 'name' : 'usuario');
-    const tipoCol = has('tipo') ? 'tipo'
-                  : has('perfil') ? 'perfil'
-                  : has('role') ? 'role'
-                  : has('cargo') ? 'cargo'
-                  : null;
-
-    const sql = `
-      SELECT id, ${nameCol} AS nome, usuario, ${tipoCol ? tipoCol : `'VENDEDOR'`} AS tipo
-      FROM usuarios
-      ORDER BY ${nameCol} ASC
-    `;
-    db.query(sql, (err2, rows) => {
-      if (err2) {
-        console.error('usuarios list error:', err2.sqlMessage || err2.message);
-        return res.status(500).json({ error: 'db_error', detail: err2.sqlMessage || String(err2) });
-      }
-      res.json(rows || []);
-    });
-  });
-});
-
-// Trocar senha
-router.put('/usuarios/:id/senha', verifyAuth, requireAdmin, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { novaSenha } = req.body || {};
-    if (!id || !novaSenha || String(novaSenha).length < 4) {
-      return res.status(400).json({ error: 'senha_invalida' });
-    }
-    const hash = await bcrypt.hash(String(novaSenha), 10);
-    const sql = `UPDATE usuarios SET senha = ? WHERE id = ?`;
-    db.query(sql, [hash, id], (err, result) => {
-      if (err) {
-        console.error('usuarios update password error:', err);
-        return res.status(500).json({ error: 'db_error' });
-      }
-      if (result.affectedRows === 0) return res.status(404).json({ error: 'usuario_nao_encontrado' });
-      return res.json({ ok: true });
-    });
-  } catch (e) {
-    console.error('usuarios update password ex:', e);
-    return res.status(500).json({ error: 'server_error' });
-  }
-});
-
-/* =================================================================
    ============================= MÍDIA =============================
    ================================================================= */
 
@@ -464,8 +414,10 @@ router.post('/midia', verifyAuth, midiaOrAdmin, upload.single('arquivo'), (req, 
       vals[3] = isNaN(d) ? 10 : Math.max(3, d);
     }
 
-    if (hasMidiaCol('data_inicio')) { cols.push('data_inicio'); vals.push(data_inicio || null); }
-    if (hasMidiaCol('data_fim'))     { cols.push('data_fim');     vals.push(data_fim || null); }
+    // Grava EXATAMENTE o que foi digitado (local, sem timezone)
+    if (hasMidiaCol('data_inicio')) { cols.push('data_inicio'); vals.push(toMySQLLocalNoTZ(data_inicio)); }
+    if (hasMidiaCol('data_fim'))     { cols.push('data_fim');     vals.push(toMySQLLocalNoTZ(data_fim)); }
+
     if (hasMidiaCol('intervalo_minutos')) {
       const inter = Number(intervalo_minutos || 15);
       cols.push('intervalo_minutos'); vals.push(isNaN(inter) ? 15 : Math.max(1, inter));
@@ -502,10 +454,10 @@ router.put('/midia/:id', verifyAuth, midiaOrAdmin, (req, res) => {
     if (ativo != null)       { sets.push('ativo = ?');       vals.push(Number(ativo) ? 1 : 0); }
 
     if (hasMidiaCol('data_inicio') && 'data_inicio' in req.body) {
-      sets.push('data_inicio = ?'); vals.push(data_inicio || null);
+      sets.push('data_inicio = ?'); vals.push(toMySQLLocalNoTZ(data_inicio));
     }
     if (hasMidiaCol('data_fim') && 'data_fim' in req.body) {
-      sets.push('data_fim = ?');     vals.push(data_fim || null);
+      sets.push('data_fim = ?');     vals.push(toMySQLLocalNoTZ(data_fim));
     }
     if (hasMidiaCol('intervalo_minutos') && 'intervalo_minutos' in req.body) {
       sets.push('intervalo_minutos = ?'); vals.push(Number(intervalo_minutos) || 15);
@@ -544,26 +496,9 @@ router.delete('/midia/:id', verifyAuth, midiaOrAdmin, (req, res) => {
 });
 
 /* =================================================================
-   ================== PLAYLIST (pública para o Painel) =============
+   ============ PLAYLIST (pública para o Painel/TV) ================
    ================================================================= */
-// GET /api/playlist?now=ISO|timestamp_ms (opcional)
-router.get('/playlist', (req, res) => {
-  // helper: Date -> 'YYYY-MM-DD HH:MM:SS'
-  const toMySQL = (d) => {
-    const pad = n => String(n).padStart(2, '0');
-    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ` +
-           `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-  };
-
-  // parse "now" (opcional)
-  let now = new Date();
-  if (req.query.now) {
-    const n = Number(req.query.now);
-    now = isNaN(n) ? new Date(String(req.query.now)) : new Date(n);
-  }
-  if (isNaN(now.getTime())) now = new Date();
-  const nowStr = toMySQL(now);
-
+router.get('/playlist', (_req, res) => {
   ensureMidiaCols((err) => {
     if (err) {
       console.error('SHOW COLUMNS midia error:', err);
@@ -575,11 +510,10 @@ router.get('/playlist', (req, res) => {
     if (hasMidiaCol('data_fim'))           fields.push('data_fim');
     if (hasMidiaCol('intervalo_minutos'))  fields.push('intervalo_minutos');
 
+    // Comparação inteiramente no MySQL usando NOW() (sessão já está em -04:00 via db.js)
     const where = ['ativo = 1'];
-    const params = [];
-
-    if (hasMidiaCol('data_inicio')) { where.push('(data_inicio IS NULL OR data_inicio <= ?)'); params.push(nowStr); }
-    if (hasMidiaCol('data_fim'))    { where.push('(data_fim IS NULL OR data_fim >= ?)');       params.push(nowStr); }
+    if (hasMidiaCol('data_inicio')) where.push('(data_inicio IS NULL OR data_inicio <= NOW())');
+    if (hasMidiaCol('data_fim'))    where.push('(data_fim    IS NULL OR data_fim    >= NOW())');
 
     const sql = `
       SELECT ${fields.join(', ')}
@@ -587,18 +521,21 @@ router.get('/playlist', (req, res) => {
       ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
       ORDER BY ord ASC, id ASC
     `;
-
-    db.query(sql, params, (e, rows) => {
+    db.query(sql, [], (e, rows) => {
       if (e) {
         console.error('playlist error:', e);
         return res.status(500).json({ error: 'db_error' });
       }
-      const base = `${req.protocol}://${req.get('host')}`;
-      const data = (rows || []).map(r => ({
+      const base = `${_req.protocol}://${_req.get('host')}`;
+      const items = (rows || []).map(r => ({
         ...r,
         src: /^https?:\/\//i.test(r.url) ? r.url : `${base}${r.url}`
       }));
-      res.json({ now: nowStr, items: data });
+      // devolve também o "agora" da sessão (bom para debug)
+      db.query('SELECT NOW() AS now_local', [], (e2, t) => {
+        const now_local = t?.[0]?.now_local || null;
+        res.json({ now: now_local, items });
+      });
     });
   });
 });
