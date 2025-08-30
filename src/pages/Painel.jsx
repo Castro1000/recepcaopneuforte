@@ -38,9 +38,48 @@ export default function Painel() {
   const videoRef = useRef(null);
   const imgTimerRef = useRef(null);
 
-  // impedir reabrir dentro do mesmo bloco
-  const suppressUntilRef = useRef(0);
-  const overlayBlockEndRef = useRef(0);
+  // throttle de abertura de overlay (evita loops)
+  const lastOpenTryRef = useRef(0);
+
+  // ===== Áudio (TTS) =====
+  const audioRef = useRef(null);
+  const [audioUnlocked, setAudioUnlocked] = useState(false);
+
+  useEffect(() => {
+    const a = new Audio();
+    a.preload = 'auto';
+    a.crossOrigin = 'anonymous';
+    audioRef.current = a;
+
+    const unlock = () => {
+      if (!audioUnlocked) {
+        try { a.muted = false; a.volume = 1; a.play().catch(()=>{}); a.pause(); a.currentTime = 0; } catch {}
+        setAudioUnlocked(true);
+      }
+    };
+    window.addEventListener('pointerdown', unlock, { once: true });
+    window.addEventListener('keydown', unlock, { once: true });
+    return () => {
+      window.removeEventListener('pointerdown', unlock);
+      window.removeEventListener('keydown', unlock);
+    };
+  }, [audioUnlocked]);
+
+  const speak = async (text) => {
+    try {
+      const a = audioRef.current;
+      if (!a) return;
+      const url = `${API_BASE}/tts?text=${encodeURIComponent(text)}`;
+      a.pause();
+      a.src = url;
+      a.currentTime = 0;
+      await a.play().catch(()=>{ /* se bloqueado, tocará assim que o usuário interagir */ });
+    } catch {}
+  };
+
+  // impedir reabrir dentro do mesmo bloco (reduzido a throttle)
+  // const suppressUntilRef = useRef(0); // <- removemos o uso global
+  // const overlayBlockEndRef = useRef(0); // <- idem
 
   const getToken = () => (localStorage.getItem('token') || '').trim();
   const getAuthHeaders = () => {
@@ -110,6 +149,13 @@ export default function Painel() {
 
   // ------- Cargas iniciais -------
   useEffect(() => { buscarFila(); fetchPlaylist(); }, []);
+
+  // Atualiza playlist quando a aba volta a foco (recupera de long-run)
+  useEffect(() => {
+    const onVis = () => { if (!document.hidden) fetchPlaylist(); };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, []);
 
   // ------- Atualizações periódicas -------
   useEffect(() => {
@@ -195,8 +241,8 @@ export default function Painel() {
   useEffect(() => {
     const tick = () => {
       const t = nowMS();
-      if (t < suppressUntilRef.current) return;
 
+      // se estiver destacando carro finalizado, não abre overlay
       if (carroFinalizado) {
         if (overlayOn) stopOverlay(false);
         return;
@@ -214,35 +260,29 @@ export default function Painel() {
   }, [playlist, carroFinalizado, windowSec, overlayOn]);
 
   const startOverlay = (tStart) => {
+    // throttle: não tentar reabrir mais que 1x/seg
+    const now = Date.now();
+    if (now - lastOpenTryRef.current < 1000) return;
+    lastOpenTryRef.current = now;
+
     const items = visibleNow(tStart);
     if (!items.length) return;
 
     setOverlayIdx(0);
     setOverlayOn(true);
 
-    const ref = items[0];
-    const iv = ivMs(ref);
-    if (iv > 0) {
-      const bs = blockStart(ref, tStart);
-      overlayBlockEndRef.current = bs + iv;
-    } else {
-      overlayBlockEndRef.current = tStart + windowSec * 1000;
-    }
+    // Removido o "suppressUntilRef" global para não travar novas janelas
+    // de itens diferentes/novos horários. Manteremos apenas o tempo de janela
+    // como referência visual (não necessário aqui).
   };
 
-  const stopOverlay = (closeAndSuppress = true) => {
+  const stopOverlay = (_closeAndSuppress = true) => {
     setOverlayOn(false);
     if (imgTimerRef.current) { clearTimeout(imgTimerRef.current); imgTimerRef.current = null; }
     try {
       const v = videoRef.current;
       if (v) { v.pause(); v.removeAttribute('src'); v.load(); }
     } catch {}
-    if (closeAndSuppress) {
-      suppressUntilRef.current = Math.max(
-        suppressUntilRef.current,
-        overlayBlockEndRef.current || 0
-      );
-    }
   };
 
   const isVideoKind = (x) => String(x?.tipo || '').toUpperCase().startsWith('VID');
@@ -383,11 +423,18 @@ export default function Painel() {
       stopOverlay(true);
       setCarroFinalizado(carro);
       setEmDestaque(true);
+
+      // Fala (TTS)
+      const modelo = (carro?.modelo || '').toString();
+      const placa  = (carro?.placa  || '').toString();
+      speak(`Serviço finalizado. Carro ${modelo}. Placa ${placa}. Dirija-se ao caixa, por favor.`);
+
       setFila((prev) => {
         const nova = prev.filter((c) => c.id !== carro.id);
         setCarroAtual((idx) => (idx >= nova.length ? 0 : idx));
         return nova;
       });
+
       if (timeoutDestaqueRef.current) clearTimeout(timeoutDestaqueRef.current);
       timeoutDestaqueRef.current = setTimeout(() => {
         setCarroFinalizado(null);
