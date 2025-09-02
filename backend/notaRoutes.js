@@ -540,4 +540,62 @@ router.get('/playlist', (_req, res) => {
   });
 });
 
+
+/* =================================================================
+   =========================== USUÁRIOS ============================
+   =================================================================
+   GET  /api/usuarios                -> lista usuários (id, usuario, nome, tipo)
+   PUT  /api/usuarios/:id/senha      -> troca a senha do usuário informado
+   (todas protegidas: requer token e perfil ADMIN/ADMINISTRADOR)
+*/
+
+router.get('/usuarios', verifyAuth, requireAdmin, (_req, res) => {
+  // COALESCE pega 'nome' se existir, senão 'name', senão 'usuario'
+  const sql = `
+    SELECT id,
+           usuario,
+           COALESCE(nome, name, usuario) AS nome,
+           tipo
+    FROM usuarios
+    ORDER BY usuario
+  `;
+  db.query(sql, [], (err, rows) => {
+    if (err) {
+      console.error('usuarios list error:', err);
+      return res.status(500).json({ error: 'db_error' });
+    }
+    res.json(rows || []);
+  });
+});
+
+// Troca de senha (body: { senha: '...' })
+router.put('/usuarios/:id/senha', verifyAuth, requireAdmin, async (req, res) => {
+  const id = Number(req.params.id);
+  const { senha } = req.body || {};
+  if (!Number.isFinite(id) || !senha) {
+    return res.status(400).json({ error: 'id/senha obrigatórios' });
+  }
+
+  try {
+    // Armazena como bcrypt hash (login já é compatível com hash ou texto puro)
+    const hash = await bcrypt.hash(String(senha), 10);
+
+    db.query('UPDATE usuarios SET senha = ? WHERE id = ?', [hash, id], (err, result) => {
+      if (err) {
+        console.error('usuarios change password error:', err);
+        return res.status(500).json({ error: 'db_error' });
+      }
+      if (!result || result.affectedRows === 0) {
+        return res.status(404).json({ error: 'not_found' });
+      }
+      res.json({ ok: true });
+    });
+  } catch (e) {
+    console.error('usuarios bcrypt error:', e);
+    res.status(500).json({ error: 'hash_error' });
+  }
+});
+
+
+
 module.exports = router;
