@@ -207,7 +207,8 @@ export default function Midia() {
         data_fim:     toMySQLLocal(edit.data_fim?.replace(" ", "T")),
         intervalo_minutos: toInt(edit.intervalo_minutos, 15),
       };
-      await apiAuth(`/api/midia/${edit.id}`, { method: "PATCH", body: JSON.stringify(body) });
+      // >>>>>>> ALTERAÇÃO AQUI: PUT no lugar de PATCH <<<<<<<
+      await apiAuth(`/api/midia/${edit.id}`, { method: "PUT", body: JSON.stringify(body) });
       setMsg("Mídia atualizada.");
       setEdit(null);
       carregarMidias();
