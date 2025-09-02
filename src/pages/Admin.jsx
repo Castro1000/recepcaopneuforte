@@ -9,7 +9,6 @@ import BotaoSair from "../components/BotaoSair";
 const API_BASE = 'https://recepcaopneuforte.onrender.com';
 //const API_BASE = 'http://localhost:3001';
 
-
 /* =========================
    Ícone SVG (engrenagem)
 ========================= */
@@ -20,21 +19,30 @@ const IconGear = (props) => (
 );
 
 /* =========================
-   Utils de data/tempo
+   Utils de data/tempo (Manaus)
 ========================= */
+const OFFSET_MANAUS_MS = 4 * 60 * 60 * 1000;
+
 function parseDbDateManaus(input) {
   if (!input) return NaN;
   if (input instanceof Date) return input.getTime();
+
   const raw = String(input).trim();
+
+  // 1) ISO com Z/offset
   let t = Date.parse(raw);
   if (!Number.isNaN(t)) return t;
-  const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/);
+
+  // 2) "YYYY-MM-DD HH:mm[:ss]" -> força -04:00 (Manaus)
+  const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/);
   if (m) {
     const [, Y, M, D, h, mm, ss] = m;
-    const sManaus = `${Y}-${M}-${D}T${h}:${mm}:${ss}-04:00`;
+    const sManaus = `${Y}-${M}-${D}T${h}:${mm}:${ss ?? '00'}-04:00`;
     t = Date.parse(sManaus);
     if (!Number.isNaN(t)) return t;
   }
+
+  // 3) fallback: supõe timezone local do navegador
   const s2 = raw.replace(' ', 'T');
   const off = new Date().getTimezoneOffset();
   const sign = off > 0 ? '-' : '+';
@@ -42,6 +50,14 @@ function parseDbDateManaus(input) {
   const MM = String(Math.abs(off) % 60).padStart(2, '0');
   return Date.parse(`${s2}${sign}${HH}:${MM}`);
 }
+
+// Se vier “no futuro” (ex.: UTC salvo como local), tira 4h
+function corrigirSeFuturoManaus(ts) {
+  if (!Number.isFinite(ts)) return ts;
+  const agora = Date.now();
+  return (ts - agora > 120_000) ? (ts - OFFSET_MANAUS_MS) : ts;
+}
+
 function formatHoraManaus(ts) {
   if (!Number.isFinite(ts)) return '-';
   return new Intl.DateTimeFormat('pt-BR', {
@@ -109,12 +125,20 @@ export default function Admin() {
     const qs = new URLSearchParams(params).toString();
     return await fetchJson(`${API_BASE}/api/relatorio-carros?${qs}`);
   }
-  async function fetchFilaAtual() {
-    const data = await fetchJson(`${API_BASE}/api/fila-servico`);
-    return (data || []).map(c => {
-      const entradaMs = Number.isFinite(c.data_entrada_ms)
-        ? c.data_entrada_ms
-        : parseDbDateManaus(c.data_entrada);
+
+  // Normaliza quaisquer linhas (se vier ms/strings), e corrige “futuro”
+  function normalizeRows(rows) {
+    return (rows || []).map((c) => {
+      const eMs0 =
+        Number.isFinite(c.data_entrada_ms) ? c.data_entrada_ms :
+        parseDbDateManaus(c.data_entrada);
+      const sMs0 =
+        Number.isFinite(c.data_saida_ms) ? c.data_saida_ms :
+        (c.data_saida ? parseDbDateManaus(c.data_saida) : NaN);
+
+      const entradaMs = corrigirSeFuturoManaus(eMs0);
+      const saidaMs = corrigirSeFuturoManaus(sMs0);
+
       return {
         id: c.id,
         placa: c.placa,
@@ -124,23 +148,31 @@ export default function Admin() {
         servico2: c.servico2,
         servico3: c.servico3,
         num_movimento: c.num_movimento,
-        data_entrada: c.data_entrada,
-        data_entrada_ms: entradaMs,
-        data_saida: null,
-        data_saida_ms: null
+        data_entrada: c.data_entrada ?? null,
+        data_entrada_ms: Number.isFinite(entradaMs) ? entradaMs : null,
+        data_saida: c.data_saida ?? null,
+        data_saida_ms: Number.isFinite(saidaMs) ? saidaMs : null
       };
     });
   }
+
+  async function fetchFilaAtual() {
+    const data = await fetchJson(`${API_BASE}/api/fila-servico`);
+    return normalizeRows(data);
+  }
+
   function filtraPorStatus(list, status) {
-    if (status === 'FINALIZADO') return list.filter(it => it.data_saida || it.data_saida_ms);
-    if (status === 'EM ANDAMENTO') return list.filter(it => !(it.data_saida || it.data_saida_ms));
+    if (status === 'FINALIZADO') return list.filter(it => it.data_saida_ms || it.data_saida);
+    if (status === 'EM ANDAMENTO') return list.filter(it => !(it.data_saida_ms || it.data_saida));
     return list;
   }
+
   async function buscar(params, { mostrarHintFila = true } = {}) {
     setLoading(true); setErrText(''); setHint(null); setPage(1);
     try {
       const rel = await fetchRelatorio(params);
-      setItems(filtraPorStatus(rel, statusSel));
+      const norm = normalizeRows(rel);
+      setItems(filtraPorStatus(norm, statusSel));
     } catch {
       try {
         const fila = await fetchFilaAtual();
@@ -157,6 +189,7 @@ export default function Admin() {
       }
     } finally { setLoading(false); }
   }
+
   const runBusca = (kind) => {
     if (kind === 'hoje')  return buscar({ from, to: from, status: 'todos' });
     if (kind === 'periodo') return buscar({ from, to, status: 'todos' });
@@ -189,17 +222,19 @@ export default function Admin() {
   // ---- KPIs + destaque min/max
   const { kpis, maxId, minId } = useMemo(() => {
     const total = items.length;
-    const finalizadosArr = items.filter(it => it.data_saida || it.data_saida_ms);
+    const finalizadosArr = items.filter(it => it.data_saida_ms || it.data_saida);
     const andamento = total - finalizadosArr.length;
 
     let maxId = null, maxDur = -1, maxItem = null;
     let minId = null, minDur = Number.POSITIVE_INFINITY;
 
     for (const it of finalizadosArr) {
-      const e = it.data_entrada_ms ?? parseDbDateManaus(it.data_entrada);
-      const s = it.data_saida_ms ?? parseDbDateManaus(it.data_saida);
-      if (!Number.isFinite(e) || !Number.isFinite(s)) continue;
-      const dur = Math.max(0, Math.floor((s - e) / 1000));
+      const e = Number.isFinite(it.data_entrada_ms) ? it.data_entrada_ms : parseDbDateManaus(it.data_entrada);
+      const s = Number.isFinite(it.data_saida_ms)   ? it.data_saida_ms   : parseDbDateManaus(it.data_saida);
+      const eC = corrigirSeFuturoManaus(e);
+      const sC = corrigirSeFuturoManaus(s);
+      if (!Number.isFinite(eC) || !Number.isFinite(sC)) continue;
+      const dur = Math.max(0, Math.floor((sC - eC) / 1000));
       if (dur > maxDur) { maxDur = dur; maxId = it.id; maxItem = it; }
       if (dur < minDur) { minDur = dur; minId = it.id; }
     }
@@ -302,8 +337,10 @@ export default function Admin() {
     ];
 
     const rows = items.map(it => {
-      const eMs = it.data_entrada_ms ?? parseDbDateManaus(it.data_entrada);
-      const sMs = it.data_saida_ms ?? (it.data_saida ? parseDbDateManaus(it.data_saida) : NaN);
+      const eMs0 = Number.isFinite(it.data_entrada_ms) ? it.data_entrada_ms : parseDbDateManaus(it.data_entrada);
+      const sMs0 = Number.isFinite(it.data_saida_ms)   ? it.data_saida_ms   : (it.data_saida ? parseDbDateManaus(it.data_saida) : NaN);
+      const eMs = corrigirSeFuturoManaus(eMs0);
+      const sMs = corrigirSeFuturoManaus(sMs0);
       const dur = (Number.isFinite(eMs) && Number.isFinite(sMs)) ? Math.max(0, Math.floor((sMs - eMs)/1000)) : null;
       const servs = [it.servico, it.servico2, it.servico3].filter(Boolean).join(' | ');
       const isFinal = Boolean(it.data_saida || it.data_saida_ms);
@@ -585,8 +622,10 @@ export default function Admin() {
             <tbody>
               {!items.length && !loading && (<tr><td colSpan="9" className="empty">Sem registros</td></tr>)}
               {pageItems.map(it=>{
-                const eMs = it.data_entrada_ms ?? parseDbDateManaus(it.data_entrada);
-                const sMs = it.data_saida_ms ?? (it.data_saida ? parseDbDateManaus(it.data_saida) : NaN);
+                const eMs0 = Number.isFinite(it.data_entrada_ms) ? it.data_entrada_ms : parseDbDateManaus(it.data_entrada);
+                const sMs0 = Number.isFinite(it.data_saida_ms)   ? it.data_saida_ms   : (it.data_saida ? parseDbDateManaus(it.data_saida) : NaN);
+                const eMs = corrigirSeFuturoManaus(eMs0);
+                const sMs = corrigirSeFuturoManaus(sMs0);
                 const dur = (Number.isFinite(eMs) && Number.isFinite(sMs)) ? Math.max(0, Math.floor((sMs - eMs)/1000)) : null;
                 const servs = [it.servico, it.servico2, it.servico3].filter(Boolean).join(' | ');
                 const isFinal = Boolean(it.data_saida || it.data_saida_ms);
