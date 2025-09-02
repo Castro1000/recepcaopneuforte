@@ -1,45 +1,37 @@
-// src/pages/Balcao.jsx
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import './Balcao.css';
 import BotaoSair from "../components/BotaoSair";
 
-const API_BASE = 'https://recepcaopneuforte.onrender.com';
-// const API_BASE = 'http://localhost:3001';
 
-/** ===================== PARSERS DE DATA ===================== **/
+
+const API_BASE = 'http://localhost:3001';
+//const API_BASE = 'https://recepcaopneuforte.onrender.com';
+
+/** Interpreta data do MySQL como Manaus quando vier "YYYY-MM-DD HH:mm:ss".
+ *  Se vier ISO/Z ou Date, também funciona. Retorna timestamp (ms).
+ */
+
 function parseDbDateManaus(input) {
-  // Retorna timestamp (ms) ou NaN
-  if (input == null) return NaN;
+  if (!input) return NaN;
   if (input instanceof Date) return input.getTime();
-
-  // Se for number (ou string numérica), tenta converter
-  if (typeof input === 'number') {
-    return Number.isFinite(input) ? input : NaN;
-  }
-  if (typeof input === 'string' && /^\d{11,}$/.test(input.trim())) {
-    // string de milissegundos (>= 11 dígitos normalmente)
-    const n = Number(input.trim());
-    return Number.isFinite(n) ? n : NaN;
-  }
 
   const raw = String(input).trim();
 
-  // 1) ISO com Z ou offset
+  // ) ISO (com Z/offset)
   let t = Date.parse(raw);
   if (!Number.isNaN(t)) return t;
 
-  // 2) "YYYY-MM-DD HH:mm[:ss]" -> força -04:00 (Manaus)
-  let m = raw.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/);
+  // 2) "YYYY-MM-DD HH:mm:ss" -> força -04:00
+  const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/);
   if (m) {
     const [, Y, M, D, h, mm, ss] = m;
-    const sec = ss ?? '00';
-    const sManaus = `${Y}-${M}-${D}T${h}:${mm}:${sec}-04:00`;
+    const sManaus = `${Y}-${M}-${D}T${h}:${mm}:${ss}-04:00`;
     t = Date.parse(sManaus);
     if (!Number.isNaN(t)) return t;
   }
 
-  // 3) Fallback: "YYYY-MM-DDTHH:mm[:ss]" + offset local
+  // 3) fallback: cola offset local
   const s2 = raw.replace(' ', 'T');
   const offsetMin = new Date().getTimezoneOffset();
   const sign = offsetMin > 0 ? '-' : '+';
@@ -50,20 +42,7 @@ function parseDbDateManaus(input) {
   return t;
 }
 
-function toMsFlexible(obj) {
-  // tenta várias chaves possíveis vindas do backend
-  const candidates = [
-    obj?.data_entrada_ms,
-    obj?.data_entrada,
-    obj?.created_at,
-    obj?.datahora_entrada
-  ];
-  for (const c of candidates) {
-    const ms = parseDbDateManaus(c);
-    if (Number.isFinite(ms)) return ms;
-  }
-  return NaN;
-}
+
 
 function formatHoraManaus(ts) {
   if (!Number.isFinite(ts)) return '-';
@@ -83,7 +62,6 @@ function fmtHMS(sec) {
   return [h, m, s].map((n) => String(n).padStart(2, '0')).join(':');
 }
 
-/** ===================== COMPONENTE ===================== **/
 export default function Balcao() {
   // ------- form -------
   const [placa, setPlaca] = useState('');
@@ -113,6 +91,7 @@ export default function Balcao() {
     document.body.style.overflow = 'hidden';
 
     const blockKeys = (e) => {
+      // bloqueia todas as teclas (inclui ESC, Enter, etc.)
       e.preventDefault();
       e.stopPropagation();
     };
@@ -124,7 +103,9 @@ export default function Balcao() {
     };
   }, [destaque]);
 
-  // Relógio 1s
+  // -----------------------------------
+  // Efeitos
+  // -----------------------------------
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
@@ -133,15 +114,7 @@ export default function Balcao() {
   const buscarCarros = async () => {
     try {
       const res = await axios.get(`${API_BASE}/api/fila-servico`);
-      // Se data_entrada_ms vier como string, convertemos aqui para evitar NaN
-      const lista = (res.data || []).map((c) => {
-        let ms = c.data_entrada_ms;
-        if (typeof ms === 'string' && /^\d{11,}$/.test(ms)) {
-          ms = Number(ms);
-        }
-        return { ...c, data_entrada_ms: ms };
-      });
-      setCarros(lista);
+      setCarros(res.data || []);
     } catch (e) {
       console.error('Erro ao buscar carros:', e);
     }
@@ -245,6 +218,7 @@ export default function Balcao() {
   // finalizar
   // -----------------------------------
   const confirmarFinalizar = (id) => {
+    // não permite abrir confirmação enquanto destaque está ativo
     if (destaque) return;
     setConfirmandoId(id);
   };
@@ -256,9 +230,10 @@ export default function Balcao() {
       setConfirmandoId(null);
       buscarCarros();
 
+      // destaque visual 30s + bloqueio total de UI
       if (data && data.carro) {
         setDestaque(data.carro);
-        setTimeout(() => setDestaque(null), 30000);
+        setTimeout(() => setDestaque(null), 30000); // ← 30s aqui
       }
     } catch (error) {
       console.error('Erro ao finalizar carro:', error);
@@ -293,6 +268,7 @@ export default function Balcao() {
   // -----------------------------------
   return (
     <div className="balcao-container">
+      
       {/* animação para o destaque (blink) */}
       <style>{`
         @keyframes blinkCard {
@@ -303,7 +279,7 @@ export default function Balcao() {
           animation: blinkCard 1s ease-in-out infinite;
         }
       `}</style>
-
+      
       <div className="cadastro-section" aria-hidden={!!destaque}>
         <h1>🚗 Cadastro Rápido</h1>
 
@@ -418,17 +394,18 @@ export default function Balcao() {
           {carros.map((carro) => {
             const textoClaro = getTextoClaro(carro.cor);
 
-            // Resolve o timestamp de entrada de forma robusta
+            // Usa data_entrada_ms quando existir; senão tenta parsear
             const entradaMs = Number.isFinite(carro.data_entrada_ms)
               ? carro.data_entrada_ms
-              : toMsFlexible(carro);
+              : parseDbDateManaus(carro.data_entrada);
 
             const secs = Number.isFinite(entradaMs)
               ? Math.max(0, Math.floor((now - entradaMs) / 1000))
               : 0;
 
-            const servicosTxt = [carro.servico, carro.servico2, carro.servico3]
-              .filter(Boolean).join(' | ');
+            const servicosTxt = [
+              carro.servico, carro.servico2, carro.servico3
+            ].filter(Boolean).join(' | ');
 
             return (
               <div
@@ -439,6 +416,7 @@ export default function Balcao() {
                   color: textoClaro ? '#000' : '#fff'
                 }}
               >
+                {/* Linha 1: Modelo | Placa | Cor + MOV */}
                 <p style={{ fontSize: '1.1rem', fontWeight: 'bold' }}>
                   🚘 {String(carro.modelo || '').toUpperCase()}
                 </p>
@@ -454,17 +432,23 @@ export default function Balcao() {
                   )}
                 </p>
 
+                {/* Serviços (sem cortar) */}
                 <p className="servicos-line">
                   <strong>Serviços:</strong> {servicosTxt || '-'}
                 </p>
 
+                {/* Entrada + Cronômetro */}
                 <p><strong>Entrada:</strong> {formatHoraManaus(entradaMs)}</p>
                 <p>⏳ {fmtHMS(secs)}</p>
 
+                {/* Botão finalizar desabilitado se destaque ativo */}
                 <button
                   onClick={() => confirmarFinalizar(carro.id)}
                   disabled={!!destaque}
-                  style={{ opacity: destaque ? 0.6 : 1, pointerEvents: destaque ? 'none' : 'auto' }}
+                  style={{
+                    opacity: destaque ? 0.6 : 1,
+                    pointerEvents: destaque ? 'none' : 'auto'
+                  }}
                 >
                   Finalizar
                 </button>
@@ -491,11 +475,18 @@ export default function Balcao() {
         </div>
       )}
 
-      {/* destaque do carro finalizado (30s) */}
+      {/* destaque do carro finalizado (30s, piscando, bloqueando tudo) */}
       {!!destaque && (
-        <div className="overlay-confirmacao" role="dialog" aria-modal="true" style={{ cursor: 'not-allowed' }}>
+        <div
+          className="overlay-confirmacao"
+          role="dialog"
+          aria-modal="true"
+          // sem onClick pra impedir fechar antes dos 30s
+          style={{ cursor: 'not-allowed' }}
+        >
           <div
             className="confirmacao-central destaque-card"
+            // também evita cliques dentro encerrarem
             onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}
             style={{ maxWidth: 420, pointerEvents: 'none' }}
           >
@@ -506,7 +497,7 @@ export default function Balcao() {
             {(() => {
               const eMs = Number.isFinite(destaque.data_entrada_ms)
                 ? destaque.data_entrada_ms
-                : toMsFlexible(destaque);
+                : parseDbDateManaus(destaque.data_entrada);
               const sMs = parseDbDateManaus(destaque.data_saida);
               const dur = (Number.isFinite(eMs) && Number.isFinite(sMs))
                 ? Math.max(0, Math.floor((sMs - eMs) / 1000))
@@ -528,11 +519,13 @@ export default function Balcao() {
                 </div>
               );
             })()}
+
+            {/* sem botão OK; some sozinho em 30s */}
           </div>
         </div>
       )}
 
-      {/* modal de alerta */}
+      {/* modal de alerta (erro/sucesso) */}
       {!!alerta && (
         <div className="overlay-confirmacao" onClick={() => setAlerta(null)}>
           <div
