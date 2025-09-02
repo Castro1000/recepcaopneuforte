@@ -542,60 +542,78 @@ router.get('/playlist', (_req, res) => {
 
 
 /* =================================================================
-   =========================== USUÁRIOS ============================
-   =================================================================
-   GET  /api/usuarios                -> lista usuários (id, usuario, nome, tipo)
-   PUT  /api/usuarios/:id/senha      -> troca a senha do usuário informado
-   (todas protegidas: requer token e perfil ADMIN/ADMINISTRADOR)
-*/
+   ========== NOVOS ENDPOINTS DE USUÁRIOS (ADMIN) ==========
+   ================================================================= */
 
-router.get('/usuarios', verifyAuth, requireAdmin, (_req, res) => {
-  // COALESCE pega 'nome' se existir, senão 'name', senão 'usuario'
-  const sql = `
-    SELECT id,
-           usuario,
-           COALESCE(nome, name, usuario) AS nome,
-           tipo
-    FROM usuarios
-    ORDER BY usuario
-  `;
-  db.query(sql, [], (err, rows) => {
+// Lista de usuários (somente ADMIN) — detecta colunas existentes
+router.get('/usuarios', verifyAuth, requireAdmin, (req, res) => {
+  db.query('SHOW COLUMNS FROM usuarios', (err, cols) => {
     if (err) {
-      console.error('usuarios list error:', err);
-      return res.status(500).json({ error: 'db_error' });
+      console.error('SHOW COLUMNS usuarios error:', err.sqlMessage || err.message);
+      return res.status(500).json({ error: 'db_error', detail: err.sqlMessage || String(err) });
     }
-    res.json(rows || []);
+
+    const has = (name) =>
+      cols?.some(c => String(c.Field).toLowerCase() === String(name).toLowerCase());
+
+    // escolhe a melhor coluna para "nome" e "tipo"
+    const nameCol = has('nome') ? 'nome' : (has('name') ? 'name' : 'usuario');
+    const tipoCol = has('tipo') ? 'tipo'
+                  : has('perfil') ? 'perfil'
+                  : has('role') ? 'role'
+                  : has('cargo') ? 'cargo'
+                  : null;
+
+    // monta SQL com o que existe
+    const sql = `
+      SELECT
+        id,
+        ${nameCol} AS nome,
+        usuario,
+        ${tipoCol ? tipoCol : `'VENDEDOR'`} AS tipo
+      FROM usuarios
+      ORDER BY ${nameCol} ASC
+    `;
+
+    db.query(sql, (err2, rows) => {
+      if (err2) {
+        console.error('usuarios list error:', err2.sqlMessage || err2.message);
+        return res.status(500).json({ error: 'db_error', detail: err2.sqlMessage || String(err2) });
+      }
+      res.json(rows || []);
+    });
   });
 });
 
-// Troca de senha (body: { senha: '...' })
+
+
+// Troca de senha (somente ADMIN)
+// Body: { novaSenha: string }
 router.put('/usuarios/:id/senha', verifyAuth, requireAdmin, async (req, res) => {
-  const id = Number(req.params.id);
-  const { senha } = req.body || {};
-  if (!Number.isFinite(id) || !senha) {
-    return res.status(400).json({ error: 'id/senha obrigatórios' });
-  }
-
   try {
-    // Armazena como bcrypt hash (login já é compatível com hash ou texto puro)
-    const hash = await bcrypt.hash(String(senha), 10);
+    const { id } = req.params;
+    const { novaSenha } = req.body || {};
+    if (!id || !novaSenha || String(novaSenha).length < 4) {
+      return res.status(400).json({ error: 'senha_invalida' });
+    }
 
-    db.query('UPDATE usuarios SET senha = ? WHERE id = ?', [hash, id], (err, result) => {
+    const hash = await bcrypt.hash(String(novaSenha), 10);
+    const sql = `UPDATE usuarios SET senha = ? WHERE id = ?`;
+
+    db.query(sql, [hash, id], (err, result) => {
       if (err) {
-        console.error('usuarios change password error:', err);
+        console.error('usuarios update password error:', err);
         return res.status(500).json({ error: 'db_error' });
       }
-      if (!result || result.affectedRows === 0) {
-        return res.status(404).json({ error: 'not_found' });
+      if (result.affectedRows === 0) {
+        return res.status(404).json({ error: 'usuario_nao_encontrado' });
       }
-      res.json({ ok: true });
+      return res.json({ ok: true });
     });
   } catch (e) {
-    console.error('usuarios bcrypt error:', e);
-    res.status(500).json({ error: 'hash_error' });
+    console.error('usuarios update password ex:', e);
+    return res.status(500).json({ error: 'server_error' });
   }
 });
-
-
 
 module.exports = router;
